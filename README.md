@@ -10,13 +10,10 @@ Review a Git diff in the browser and comment on lines, blocks, or whole files. T
 comments to an agent as a prompt, or to GitHub as a pending review.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/demo-dark.gif">
-  <source media="(prefers-color-scheme: light)" srcset=".github/assets/demo-light.gif">
-  <img alt="A review in diffle: two comments on a rate-limiting change, then yy copies them as one prompt" src=".github/assets/demo-light.gif">
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/videos/review-dark.gif">
+  <source media="(prefers-color-scheme: light)" srcset=".github/assets/videos/review-light.gif">
+  <img alt="A review in diffle: two comments on a rate-limiting change, then yy copies them as one prompt" src=".github/assets/videos/review-light.gif">
 </picture>
-
-Two comments on a rate limiter, then `yy` copies them as one prompt. Watch it as video:
-[light](.github/assets/demo-light.mp4), [dark](.github/assets/demo-dark.mp4).
 
 ## Install
 

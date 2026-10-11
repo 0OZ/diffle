@@ -6,7 +6,7 @@
   "include": [
     "test/e2e",
     "scripts/screenshot.ts",
-    "scripts/record-demo.ts",
+    "scripts/record-videos.ts",
     "test/fixture",
     "test/tmp.ts",
     "src/shared",
