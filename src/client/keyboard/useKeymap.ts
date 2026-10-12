@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { copyText } from '../clipboard.js';
 import { api } from '../api.js';
-import { clearWordFocus, moveWord, moveWordToEdge } from '../lsp/wordNav.js';
+import { clearWordFocus, moveWord, moveWordToEdge, scrollCursorInline } from '../lsp/wordNav.js';
 import { currentPath, MODE_PANES } from '../model.js';
 import { remPx } from '../scale.js';
 import { useStore, type ReviewState } from '../store.js';
@@ -61,6 +61,9 @@ const KEYMAP: Record<string, Action> = {
   zt: (s) => s.scrollCursorTo('top'),
   zb: (s) => s.scrollCursorTo('bottom'),
   zz: (s) => s.scrollCursorTo('eye'),
+  zw: (s) => s.saveConfig({ lineWrap: !s.config.lineWrap }),
+  zh: () => scrollCursorInline(-1),
+  zl: () => scrollCursorInline(1),
   s: (s) => s.setDiffStyle(s.diffStyle === 'split' ? 'unified' : 'split'),
   t: (s) => s.setTheme(nextTheme(s.theme)),
   yy: () => void copyComments(),
