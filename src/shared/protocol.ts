@@ -28,6 +28,7 @@ export const LanguageIdSchema = z.enum([
   'toml',
   'typescript',
   'typescriptreact',
+  'vue',
   'yaml',
   'zig',
 ]);
@@ -754,6 +755,7 @@ const LANGUAGE_BY_EXT: Record<string, LanguageId> = {
   toml: 'toml',
   ts: 'typescript',
   tsx: 'typescriptreact',
+  vue: 'vue',
   yaml: 'yaml',
   yml: 'yaml',
   zig: 'zig',

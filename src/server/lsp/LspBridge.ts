@@ -24,6 +24,8 @@ import { configurationItems, type LspSettings } from './configuration.js';
 export interface LspBridgeOptions {
   /** Settings sent after initialization and returned for workspace/configuration requests. */
   settings?: Promise<LspSettings>;
+  /** Sent with `initialize`, for servers configured there rather than through settings. */
+  initializationOptions?: LspSettings;
   /** Shell command line that starts a stdio language server, e.g. `pyrefly lsp`. */
   command: string;
   /** Repository root; becomes the workspace folder and the process cwd. */
@@ -526,6 +528,7 @@ export class LspBridge {
           rootUri,
           rootPath: this.opts.root,
           workspaceFolders: [{ uri: rootUri, name: 'workspace' }],
+          initializationOptions: this.opts.initializationOptions,
           capabilities: {
             window: { workDoneProgress: true },
             textDocument: {

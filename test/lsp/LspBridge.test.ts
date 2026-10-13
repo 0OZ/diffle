@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import type { LspSettings } from '../../src/server/lsp/configuration.js';
 import { LspBridge, LspUnavailableError } from '../../src/server/lsp/LspBridge.js';
 import { type LspProcessStatus } from '../../src/shared/protocol.js';
 
@@ -17,7 +18,7 @@ const files: Record<string, string> = {
   'z.py': 'z\n',
 };
 
-function start(env: Record<string, string> = {}, root = ROOT, maxOpen?: number) {
+function start(env: Record<string, string> = {}, root = ROOT, maxOpen?: number, initializationOptions?: LspSettings) {
   let notify: (method: string, params: unknown) => void;
   const statuses: LspProcessStatus[] = [];
   /** Document events the fake server logged: `open a.py v1`, `change a.py v2`, `close a.py`. */
@@ -34,6 +35,7 @@ function start(env: Record<string, string> = {}, root = ROOT, maxOpen?: number) 
     },
     has: async (p) => p in files,
     maxOpen,
+    initializationOptions,
     onStatus: (s) => statuses.push(s),
     spawnProcess: () => {
       const child = spawn(process.execPath, [FAKE], {
@@ -329,6 +331,17 @@ describe('LspBridge', () => {
     const { bridge } = start({ FAKE_LSP_LOADING_DURING_QUERY: '1' });
     try {
       await expect(bridge.definition({ path: 'a.py', line: 3, col: 4 })).rejects.toThrow('Reloading workspace');
+    } finally {
+      await bridge.close();
+    }
+  });
+
+  it('hands initializationOptions to the server with initialize', async () => {
+    const plugins = [{ name: '@vue/typescript-plugin', location: '/opt/vue', languages: ['vue'] }];
+    const { bridge, events } = start({}, ROOT, undefined, { plugins });
+    try {
+      await bridge.track(['a.py']);
+      await expect.poll(() => events).toContain(`init ${JSON.stringify({ plugins })}`);
     } finally {
       await bridge.close();
     }

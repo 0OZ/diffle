@@ -4,8 +4,9 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import type { LanguageId } from '../../shared/protocol.js';
 import { writeFileAtomic } from '../persist.js';
-import { argv0 } from './which.js';
+import { argv0, findOnPath } from './which.js';
 import { JsonRpcError } from './JsonRpc.js';
+import { VUE_PLUGIN, vuePluginLocation } from './vue.js';
 
 export const SCHEMA_CATALOG = 'https://www.schemastore.org/api/json/catalog.json';
 const MAX_AGE = 24 * 60 * 60 * 1000;
@@ -55,18 +56,57 @@ export async function loadSchemaCatalog(
   }
 }
 
-/** Default schema settings for the languages routed to a process. */
-export async function settingsFor(languages: LanguageId[], command: string): Promise<LspSettings> {
-  const settings: LspSettings = {};
-  if (languages.includes('yaml')) settings.yaml = { hover: true, schemaStore: { enable: true, url: SCHEMA_CATALOG } };
-  const program = argv0(command)
+/** The program a command line runs, without its directory or Windows extension. */
+function programOf(command: string): string | undefined {
+  return argv0(command)
     .split(/[\\/]/)
     .pop()
     ?.replace(/\.(exe|cmd|bat)$/i, '');
+}
+
+/**
+ * The tsserver plugin entry for .vue files when `vue-language-server` is on PATH, else
+ * null. Loaded whenever a TypeScript server starts, not only when the diff holds a .vue
+ * file: a process serving .ts files first and .vue files after a refresh cannot load it
+ * later, and .ts files importing components resolve them.
+ */
+function vuePlugin(lookup: (command: string) => string | null): LspSettings | null {
+  const executable = lookup('vue-language-server');
+  const location = executable == null ? null : vuePluginLocation(executable);
+  return location == null ? null : { name: VUE_PLUGIN, location, languages: ['vue'] };
+}
+
+/** Default settings for the languages routed to a process. `lookup` is a test seam for the PATH probe. */
+export async function settingsFor(
+  languages: LanguageId[],
+  command: string,
+  lookup: (command: string) => string | null = findOnPath,
+): Promise<LspSettings> {
+  const settings: LspSettings = {};
+  if (languages.includes('yaml')) settings.yaml = { hover: true, schemaStore: { enable: true, url: SCHEMA_CATALOG } };
+  const program = programOf(command);
   if (languages.includes('toml') && program === 'taplo')
     settings.evenBetterToml = { schema: { enabled: true, catalogs: [SCHEMA_CATALOG] } };
   if (languages.some((l) => l === 'json' || l === 'jsonc')) settings.json = { schemas: await loadSchemaCatalog() };
+  if (program === 'vtsls') {
+    // vtsls takes tsserver plugins as settings; the namespace is where Vue's plugin reads its options.
+    const plugin = vuePlugin(lookup);
+    if (plugin) settings.vtsls = { tsserver: { globalPlugins: [{ ...plugin, configNamespace: 'typescript' }] } };
+  }
   return settings;
+}
+
+/**
+ * `initializationOptions` for a process, or undefined when the server takes none:
+ * typescript-language-server loads tsserver plugins from here. `lookup` is a test seam.
+ */
+export function initializationOptionsFor(
+  command: string,
+  lookup: (command: string) => string | null = findOnPath,
+): LspSettings | undefined {
+  if (programOf(command) !== 'typescript-language-server') return undefined;
+  const plugin = vuePlugin(lookup);
+  return plugin ? { plugins: [plugin] } : undefined;
 }
 
 /**

@@ -125,6 +125,9 @@ diffle starts a language server for each language in the diff, if it finds one o
 Results outside the diff, such as the standard library, open read-only. Large repositories can
 take a while to index.
 
+Vue files are served by the TypeScript server once `vue-language-server` is on `PATH` too
+(`npm install -g @vue/language-server`): tsserver loads the plugin that ships with it.
+
 `diffle lsp` shows which server each language gets and what to install for the rest:
 
 ```

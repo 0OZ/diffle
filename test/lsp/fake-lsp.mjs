@@ -47,6 +47,7 @@ function handle(msg) {
     case 'initialize':
       if (process.env.FAKE_LSP_DIE === '1') process.exit(3);
       if (!msg.params.capabilities.window?.workDoneProgress) process.exit(4);
+      if (msg.params.initializationOptions) log('init ' + JSON.stringify(msg.params.initializationOptions));
       return reply(msg.id, { capabilities: {} });
     case 'test/notification':
       return send({ jsonrpc: '2.0', method: msg.params.method, params: msg.params.params });

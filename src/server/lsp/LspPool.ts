@@ -15,7 +15,7 @@ import {
 import { fuzzyRank } from '../../shared/fuzzy.js';
 import { LspBridge, LspUnavailableError } from './LspBridge.js';
 import { resolveServers } from './registry.js';
-import { settingsFor } from './configuration.js';
+import { initializationOptionsFor, settingsFor } from './configuration.js';
 
 export interface LspPoolOptions {
   /** Repository root; becomes every server's workspace folder and cwd. */
@@ -189,7 +189,8 @@ export class LspPool {
     const entry: Entry = {
       bridge: LspBridge.start({
         command,
-        settings: settingsFor(languages, command),
+        settings: settingsFor(languages, command, this.opts.lookup),
+        initializationOptions: initializationOptionsFor(command, this.opts.lookup),
         root: this.opts.root,
         read: this.opts.read,
         has: this.opts.has,

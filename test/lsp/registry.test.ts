@@ -50,6 +50,24 @@ describe('resolveServers', () => {
     expect(probed).toEqual(candidatesFor('go'));
   });
 
+  it('routes vue to a TypeScript server only beside the plugin vue-language-server ships', () => {
+    // Nothing installed: every program a candidate would need, in candidate order.
+    expect(resolveServers(['vue'], {}, path()).missing).toEqual([
+      { language: 'vue', tried: ['typescript-language-server', 'vue-language-server', 'vtsls'] },
+    ]);
+    // The TypeScript server alone names what is still to install, not what is already there.
+    expect(resolveServers(['vue'], {}, path('typescript-language-server')).missing).toEqual([
+      { language: 'vue', tried: ['vue-language-server', 'vtsls'] },
+    ]);
+    const { servers, missing } = resolveServers(
+      ['vue', 'typescript'],
+      {},
+      path('typescript-language-server', 'vue-language-server'),
+    );
+    expect(servers).toEqual([{ command: 'typescript-language-server --stdio', languages: ['typescript', 'vue'] }]);
+    expect(missing).toEqual([]);
+  });
+
   it('probes each candidate once, however many languages ask for it', () => {
     const probed: string[] = [];
     resolveServers(['typescript', 'typescriptreact', 'javascript', 'javascriptreact'], {}, (c) => {

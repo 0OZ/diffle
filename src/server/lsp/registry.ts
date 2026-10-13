@@ -6,6 +6,8 @@ export interface ServerCandidate {
   languages: LanguageId[];
   /** Shell command line that starts it on stdio. */
   command: string;
+  /** A second program that must be on PATH too: the one shipping a plugin `command` loads. */
+  requires?: string;
 }
 
 /**
@@ -25,6 +27,10 @@ export const CANDIDATES: ServerCandidate[] = [
     command: 'typescript-language-server --stdio',
   },
   { languages: ['typescript', 'typescriptreact', 'javascript', 'javascriptreact'], command: 'vtsls --stdio' },
+  // Vue 3 language tools answer for .vue files from inside tsserver, through the plugin
+  // that ships with vue-language-server; the TypeScript servers load it (configuration.ts).
+  { languages: ['vue'], command: 'typescript-language-server --stdio', requires: 'vue-language-server' },
+  { languages: ['vue'], command: 'vtsls --stdio', requires: 'vue-language-server' },
   { languages: ['rust'], command: 'rust-analyzer' },
   { languages: ['go'], command: 'gopls' },
   { languages: ['c', 'cpp'], command: 'clangd' },
@@ -71,7 +77,9 @@ export function candidatesFor(language: LanguageId): string[] {
  * list for its language and is never probed: the user named a command, so a typo
  * should surface as the server failing to start, not as silence. An override of `''`
  * turns the language off. Languages resolving to the same command line share one
- * process. `lookup` is a test seam for the PATH probe.
+ * process. A missing language's `tried` names the programs that were not on PATH, so
+ * a candidate needing two programs lists only the absent one. `lookup` is a test
+ * seam for the PATH probe.
  */
 export function resolveServers(
   languages: Iterable<LanguageId>,
@@ -88,11 +96,24 @@ export function resolveServers(
   const missing: LspMissing[] = [];
   // Sorted so the status, the startup line and `diffle lsp` list servers the same way every run.
   for (const language of [...new Set(languages)].sort()) {
-    const override = overrides[language]?.trim();
-    const command = override ?? candidatesFor(language).find(found);
+    let command = overrides[language]?.trim();
+    // An empty override is a deliberate off switch, and names nothing to install.
+    const tried: string[] = [];
+    if (command == null) {
+      for (const candidate of CANDIDATES) {
+        if (!candidate.languages.includes(language)) continue;
+        const absent = [candidate.command, candidate.requires]
+          .filter((c): c is string => c != null && !found(c))
+          .map(argv0);
+        if (!absent.length) {
+          command = candidate.command;
+          break;
+        }
+        for (const program of absent) if (!tried.includes(program)) tried.push(program);
+      }
+    }
     if (command == null || command === '') {
-      // An empty override is a deliberate off switch, and names nothing to install.
-      missing.push({ language, tried: command === '' ? [] : candidatesFor(language).map(argv0) });
+      missing.push({ language, tried });
       continue;
     }
     const server = servers.get(command);
