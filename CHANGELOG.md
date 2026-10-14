@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.6](https://github.com/moritzwilksch/diffle/compare/v0.2.5...v0.2.6) - 2026-10-14
+
+### Bug fixes
+
+- _(commits)_ Wrap a shown commit's long subject and align range-diff glyphs ([#318](https://github.com/moritzwilksch/diffle/pull/318))
+
+### Testing
+
+- _(e2e)_ Wait for the file tree after a reload before navigating ([#320](https://github.com/moritzwilksch/diffle/pull/320))
+
 ## [0.2.5](https://github.com/moritzwilksch/diffle/compare/v0.2.4...v0.2.5) - 2026-10-12
 
 ### Features
