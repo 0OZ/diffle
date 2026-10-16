@@ -16,6 +16,7 @@ Diffle is a local Git review app: a Node/Hono server owns repository state; a Re
 - `src/client/store.ts`: Zustand state and effects; guard async commits with the current generation.
 - `src/client/model.ts`: pure state functions and item identity, kept separate to avoid store cycles.
 - `src/client/review/ReviewPane.tsx`: `CodeView` rendering, measurement, and scroll placement.
+- `src/client/ui/dialog.tsx`, `tooltip.tsx`: shadcn components on Base UI (`components.json`, `@/` alias). We own them, restyled to the theme tokens; add another with `npx shadcn add`, then restyle it the same way. Not `button`: it would collide with `Button.tsx` on case-insensitive filesystems. `TipSurface` hangs a tip at a viewport box; `TitleTooltips` turns every `title` into one.
 
 ## Preserve these invariants
 
@@ -28,6 +29,7 @@ Diffle is a local Git review app: a Node/Hono server owns repository state; a Re
 - Navigation jumps land at the fixed gaze point with `placeCursor(..., 'eye')` or `align: 'eye'`.
 - `ReviewPane` resolves estimated jump layouts synchronously: scroll, `render(true)`, then reissue the measured offset before paint. Avoid cross-frame correction.
 - Handled keys stop propagation in `useKeymap`; `CodeView` cancels pending scroll on propagated keydown.
+- The keymap runs the store's `escape()` on Escape and lets the key through, so a Base UI dialog also closes. A dialog whose Escape does more than close (References leaves a peek first) ignores the `escape-key` reason in `onOpenChange`.
 - User input errors become `RevspecError`, `GitError`, `GithubError`, or Commander usage errors and exit 2; unexpected failures propagate.
 
 ## Renovate cleanly
