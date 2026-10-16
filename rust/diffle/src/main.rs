@@ -4,5 +4,5 @@ use std::process::ExitCode;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    diffle::app::run().await
+    diffle::app::run::run().await
 }

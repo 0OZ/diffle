@@ -7,6 +7,8 @@ use std::time::Duration;
 use axum::Router;
 use axum::middleware::from_fn_with_state;
 use axum::routing::get;
+use axum::serve::ListenerExt;
+use tokio::net::TcpStream;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tower_http::compression::CompressionLayer;
@@ -61,7 +63,7 @@ pub async fn start(
     let app = assemble(&guard, api, hub, &config.client);
     let task = tokio::spawn(async move {
         let mut stopping = stopping;
-        axum::serve(listener, app)
+        axum::serve(listener.tap_io(send_at_once), app)
             .with_graceful_shutdown(async move {
                 // A dropped sender also means stop: nothing is left to serve for.
                 let _ = stopping.wait_for(|stop| *stop).await;
@@ -74,6 +76,14 @@ pub async fn start(
         stop,
         task,
     })
+}
+
+/// A reply leaves as several small writes (a file's head, then its body, or a socket frame).
+/// With Nagle's algorithm the second waits for the client's delayed ACK, about 40 ms, so every
+/// request on a kept-alive connection would stall.
+fn send_at_once(stream: &mut TcpStream) {
+    // A refusal leaves Nagle on for this connection: replies still arrive, just later.
+    let _ = stream.set_nodelay(true);
 }
 
 /// Everything under one router: the API and the socket behind the guard, and for any other

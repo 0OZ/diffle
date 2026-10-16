@@ -9,11 +9,15 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
-use super::server_fixtures::Running;
+use super::server_fixtures::{Running, try_request};
 use crate::domains::review::session::session_events::SessionEvent;
 
 const PATIENCE: Duration = Duration::from_secs(10);
 const BRIEFLY: Duration = Duration::from_millis(200);
+const KEPT_ALIVE_REQUESTS: usize = 100;
+/// A few ms in all when replies leave at once; 20 to 40 ms per request when they wait for a
+/// delayed ACK, which is well over this.
+const KEPT_ALIVE_BUDGET: Duration = Duration::from_millis(500);
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -204,12 +208,25 @@ async fn a_page_that_sends_too_much_is_dropped() {
     clients(&running, 0).await;
 }
 
+/// The repository root the server at `port` reports, if something there answers at all.
+async fn reported_root(port: u16) -> Option<Value> {
+    let answer = tokio::time::timeout(BRIEFLY, try_request(port, "GET", "/api/snapshot", &[]))
+        .await
+        .ok()??;
+    let body: Value = serde_json::from_str(&answer.text()).ok()?;
+    Some(body["root"].clone())
+}
+
 #[tokio::test]
 async fn stopping_closes_the_pages_and_ends_the_server() {
     let running = Running::start().await;
     let mut socket = connect(&running).await;
     clients(&running, 1).await;
     let port = running.port();
+    // Asked by what it serves, not by the port alone: a parallel test, or any other server on
+    // this machine, may be given the port number that was just freed.
+    let root = reported_root(port).await;
+    assert!(root.is_some(), "a live server reports its repository");
     let Running { server, .. } = running;
     tokio::time::timeout(PATIENCE, server.stop()).await.unwrap();
     let closed = tokio::time::timeout(PATIENCE, socket.next()).await.unwrap();
@@ -217,11 +234,10 @@ async fn stopping_closes_the_pages_and_ends_the_server() {
         matches!(closed, None | Some(Ok(Message::Close(_))) | Some(Err(_))),
         "{closed:?}"
     );
-    assert!(
-        tokio::time::timeout(BRIEFLY, TcpStream::connect(("127.0.0.1", port)))
-            .await
-            .map_or(true, |attempt| attempt.is_err()),
-        "nothing listens any more"
+    assert_ne!(
+        reported_root(port).await,
+        root,
+        "the stopped server still serves its review"
     );
 }
 
@@ -244,4 +260,17 @@ async fn a_page_that_fell_behind_is_told_to_refetch_everything() {
             json!({"type": "config"}),
         ]
     );
+}
+
+/// A file's reply is written as its head and then its body; Nagle's algorithm holds the second
+/// write back until the client's delayed ACK, so each request on a kept-alive connection stalls.
+#[tokio::test]
+async fn replies_on_a_kept_alive_connection_are_not_delayed() {
+    let running = Running::start().await;
+    let took = running.time_kept_alive_gets("/", KEPT_ALIVE_REQUESTS).await;
+    assert!(
+        took < KEPT_ALIVE_BUDGET,
+        "{KEPT_ALIVE_REQUESTS} requests took {took:?}"
+    );
+    running.server.stop().await;
 }

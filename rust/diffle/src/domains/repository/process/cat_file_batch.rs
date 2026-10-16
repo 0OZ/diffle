@@ -1,7 +1,8 @@
 //! One long-lived `git cat-file --batch` per repository. Object names go in on stdin and come
 //! back in order on stdout, so a burst of reads (hydrating a diff, sniffing every changed blob)
 //! costs one process instead of one each. The process is reaped after a quiet spell and the
-//! next read starts a new one; if it dies mid-read, that read fails and the next starts over.
+//! next read starts a new one; if it dies mid-read, that read fails and the next starts over. A
+//! read that is dropped mid-way does the same: its process is discarded, not trusted.
 
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -15,6 +16,7 @@ use tokio::sync::Mutex;
 use tokio::time::{Instant, sleep};
 
 use super::git_error::GitError;
+use super::git_object::{GitObject, ObjectKind};
 use super::git_runner::{Exit, GitRunner};
 
 const IDLE_REAP_AFTER: Duration = Duration::from_secs(2);
@@ -23,57 +25,6 @@ const MISSING: &str = "missing";
 const AMBIGUOUS: &str = "ambiguous";
 /// `<sha> <type> <size>`: a name that is missing echoes itself instead, spaces and all.
 const HIT_FIELDS: usize = 3;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ObjectKind {
-    Blob,
-    Tree,
-    Commit,
-    Tag,
-}
-
-impl ObjectKind {
-    fn parse(name: &str) -> Option<Self> {
-        match name {
-            "blob" => Some(Self::Blob),
-            "tree" => Some(Self::Tree),
-            "commit" => Some(Self::Commit),
-            "tag" => Some(Self::Tag),
-            _ => None,
-        }
-    }
-}
-
-/// An object's kind and size, and the first bytes of its body.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GitObject {
-    kind: ObjectKind,
-    size: u64,
-    head: Vec<u8>,
-}
-
-impl GitObject {
-    #[must_use]
-    pub const fn kind(&self) -> ObjectKind {
-        self.kind
-    }
-
-    #[must_use]
-    pub const fn size(&self) -> u64 {
-        self.size
-    }
-
-    /// As many bytes as were asked for, or all of them when the object is smaller.
-    #[must_use]
-    pub fn head(&self) -> &[u8] {
-        &self.head
-    }
-
-    #[must_use]
-    pub fn into_head(self) -> Vec<u8> {
-        self.head
-    }
-}
 
 #[derive(Debug)]
 struct Batch {
@@ -87,6 +38,9 @@ struct Slot {
     batch: Option<Batch>,
     last_used: Instant,
     reaper_running: bool,
+    /// A request began and has not returned. If it never does (its caller was dropped), git's
+    /// reply is still in the pipe and would be read as the answer to the next name.
+    unfinished: bool,
 }
 
 #[derive(Debug)]
@@ -115,6 +69,7 @@ impl ObjectReader {
                     batch: None,
                     last_used: Instant::now(),
                     reaper_running: false,
+                    unfinished: false,
                 }),
                 spawns: AtomicUsize::new(0),
                 reap_after,
@@ -136,7 +91,13 @@ impl ObjectReader {
             return self.read_alone(name, keep).await;
         }
         let mut slot = self.shared.slot.lock().await;
+        if slot.unfinished {
+            // Its pipe holds an answer nobody read; the process goes, a new one starts below.
+            slot.batch = None;
+        }
+        slot.unfinished = true;
         let result = self.request(&mut slot, name, keep).await;
+        slot.unfinished = false;
         slot.last_used = Instant::now();
         match &result {
             Ok(_) => self.keep_reaping(&mut slot),
@@ -197,7 +158,7 @@ impl ObjectReader {
             return Err(unexpected("<sha> <type> <size>", header));
         };
         let head = read_body(&mut batch.stdout, size, keep).await?;
-        Ok(Some(GitObject { kind, size, head }))
+        Ok(Some(GitObject::new(kind, size, head)))
     }
 
     fn start(&self) -> Result<Batch, GitError> {
@@ -262,7 +223,7 @@ impl ObjectReader {
         let size = body.len() as u64;
         let mut head = body;
         head.truncate(keep);
-        Ok(Some(GitObject { kind, size, head }))
+        Ok(Some(GitObject::new(kind, size, head)))
     }
 }
 

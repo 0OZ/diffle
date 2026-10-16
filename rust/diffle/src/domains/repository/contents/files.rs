@@ -11,8 +11,8 @@ use crate::domains::repository::git_repo::GitRepo;
 use crate::domains::repository::names::object_id::ObjectId;
 use crate::domains::repository::names::repo_path::RepoPath;
 use crate::domains::repository::names::tree_source::TreeSource;
-use crate::domains::repository::process::cat_file_batch::ObjectKind;
 use crate::domains::repository::process::git_error::GitError;
+use crate::domains::repository::process::git_object::ObjectKind;
 
 impl GitRepo {
     /// The file at `path` on `source`, or `None` when it is absent there or not a regular
