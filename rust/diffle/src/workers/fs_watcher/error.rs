@@ -24,3 +24,22 @@ pub enum WatchError {
     #[error("the watcher setup task failed: {0}")]
     Setup(#[source] tokio::task::JoinError),
 }
+
+impl WatchError {
+    /// The error and, for a system limit the person can raise, what to do about it.
+    #[must_use]
+    pub fn explained(&self) -> String {
+        let out_of_watches = matches!(
+            self,
+            Self::Watch { source, .. } if matches!(source.kind, notify::ErrorKind::MaxFilesWatch)
+        );
+        match out_of_watches {
+            true => format!("{self} (raise fs.inotify.max_user_watches, or start with --no-watch)"),
+            false => self.to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "error_tests.rs"]
+mod tests;

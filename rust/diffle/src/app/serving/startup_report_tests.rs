@@ -29,7 +29,13 @@ fn the_totals_count_lines_and_skip_binary_files() {
         file("c.png", Delta::Binary),
     ];
     assert_eq!(
-        report_lines("main...HEAD", &changed, Liveness::Pinned, false, true),
+        report_lines(
+            "main...HEAD",
+            &changed,
+            Liveness::Pinned,
+            false,
+            Watching::On
+        ),
         ["🔍 comparing main...HEAD", "📝 3 changed files  +5 −1"]
     );
 }
@@ -41,14 +47,14 @@ fn one_file_is_singular() {
         &[file("a.rs", text(1, 1))],
         Liveness::Pinned,
         false,
-        true,
+        Watching::On,
     );
     assert_eq!(lines[1], "📝 1 changed file  +1 −1");
 }
 
 #[test]
 fn no_differences_say_what_to_do_next() {
-    let lines = report_lines("HEAD..worktree", &[], Liveness::Pinned, false, true);
+    let lines = report_lines("HEAD..worktree", &[], Liveness::Pinned, false, Watching::On);
     assert_eq!(
         lines[1],
         "! No differences. Open any file from the tree to comment on it."
@@ -58,22 +64,25 @@ fn no_differences_say_what_to_do_next() {
 #[test]
 fn a_live_review_says_what_it_watches() {
     let changed = [file("a.rs", text(1, 0))];
-    let watching = |liveness, follows, on| {
-        report_lines("x", &changed, liveness, follows, on)
+    let watching = |liveness, follows, watching| {
+        report_lines("x", &changed, liveness, follows, watching)
             .pop()
             .unwrap()
     };
     assert_eq!(
-        watching(Liveness::Worktree, true, true),
+        watching(Liveness::Worktree, true, Watching::On),
         "👀 watching the worktree"
     );
-    assert_eq!(watching(Liveness::Refs, true, true), "👀 watching refs");
     assert_eq!(
-        watching(Liveness::Refs, false, true),
+        watching(Liveness::Refs, true, Watching::On),
+        "👀 watching refs"
+    );
+    assert_eq!(
+        watching(Liveness::Refs, false, Watching::On),
         "👀 watching refs; moved refs show a Reload button"
     );
     assert_eq!(
-        watching(Liveness::Worktree, true, false),
+        watching(Liveness::Worktree, true, Watching::Disabled),
         "👀 watching the worktree (disabled with --no-watch)"
     );
 }
@@ -85,7 +94,21 @@ fn a_pinned_review_watches_nothing() {
         &[file("a.rs", text(1, 0))],
         Liveness::Pinned,
         false,
-        true,
+        Watching::On,
     );
     assert_eq!(lines.len(), 2);
+}
+
+#[test]
+fn a_watcher_that_could_not_start_says_why_and_what_still_works() {
+    let changed = [file("a.rs", text(1, 0))];
+    let failed = Watching::Failed("cannot watch for changes: OS file watch limit reached");
+    let line = report_lines("x", &changed, Liveness::Worktree, true, failed)
+        .pop()
+        .unwrap();
+    assert_eq!(
+        line,
+        "⚠ cannot watch for changes: OS file watch limit reached; \
+         the review updates when you reload or switch mode"
+    );
 }

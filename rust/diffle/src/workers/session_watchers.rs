@@ -17,7 +17,7 @@ pub fn session_watchers() -> WatcherFactory {
 async fn start(request: WatchRequest) -> Result<Watch, WatchFailure> {
     let (watcher, dirty) = FsWatcher::start(target_of(request), DEFAULT_DEBOUNCE)
         .await
-        .map_err(|error| WatchFailure(error.to_string()))?;
+        .map_err(|error| WatchFailure(error.explained()))?;
     // Dropping the watcher ends it, which is how the session stops a watch.
     Ok(Watch {
         dirty,

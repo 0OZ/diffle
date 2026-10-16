@@ -58,10 +58,7 @@ const fn review_status(error: &ReviewError) -> u8 {
         | ReviewError::NothingToFocus
         | ReviewError::NoUncommittedChanges { .. }
         | ReviewError::NotListed { .. } => EXIT_USAGE,
-        ReviewError::Comments(_)
-        | ReviewError::Watch(_)
-        | ReviewError::NotOpen
-        | ReviewError::Interrupted => EXIT_FAILURE,
+        ReviewError::Comments(_) | ReviewError::NotOpen | ReviewError::Interrupted => EXIT_FAILURE,
     }
 }
 

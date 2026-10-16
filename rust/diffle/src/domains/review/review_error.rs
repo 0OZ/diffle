@@ -22,8 +22,6 @@ pub enum ReviewError {
     NoUncommittedChanges { range: String },
     #[error("not a listed commit of {range}: {commit}")]
     NotListed { range: String, commit: String },
-    #[error(transparent)]
-    Watch(#[from] crate::domains::review::session::session_watch::WatchFailure),
     #[error("no review is open yet")]
     NotOpen,
     #[error("the review stopped before the request finished")]

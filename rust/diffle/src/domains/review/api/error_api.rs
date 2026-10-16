@@ -108,9 +108,7 @@ impl From<ReviewError> for ApiError {
             | ReviewError::NothingToFocus
             | ReviewError::NoUncommittedChanges { .. }
             | ReviewError::NotListed { .. } => Self::BadRequest(error.to_string()),
-            ReviewError::Watch(_) | ReviewError::NotOpen | ReviewError::Interrupted => {
-                Self::internal(&error)
-            }
+            ReviewError::NotOpen | ReviewError::Interrupted => Self::internal(&error),
         }
     }
 }

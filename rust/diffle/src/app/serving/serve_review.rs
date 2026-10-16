@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use super::ending::{Ending, wait_for_ending};
 use super::hand_off::hand_off;
-use super::startup_report::report_lines;
+use super::shutdown::{SHUTDOWN_GRACE, Shutdown, within_grace};
+use super::startup_report::{Watching, report_lines};
 use crate::app::app_error::AppError;
 use crate::app::config::Config;
 use crate::domains::repository::git_repo::GitRepo;
@@ -68,7 +69,7 @@ pub async fn serve_review(config: Config, settings: Arc<ConfigStore>) -> Result<
     let ending = match started {
         None => Ending::Interrupted,
         Some(Err(error)) => {
-            dispose(&session, server).await;
+            dispose(&session, server, &mut interrupts).await;
             return Err(error.into());
         }
         Some(Ok(snapshot)) => {
@@ -83,7 +84,7 @@ pub async fn serve_review(config: Config, settings: Arc<ConfigStore>) -> Result<
             .await
         }
     };
-    finish(ending, &session, server).await
+    finish(ending, &session, server, &mut interrupts).await
 }
 
 fn report(config: &Config, session: &Session, snapshot: &Snapshot) {
@@ -92,34 +93,58 @@ fn report(config: &Config, session: &Session, snapshot: &Snapshot) {
     };
     let parts = snapshot.parts();
     let comparison = active.mode().comparison();
+    let unwatched = active.unwatched();
     for line in report_lines(
         &comparison_label(comparison),
         &parts.changed,
         comparison.live(),
         session.follows(&active),
-        config.watch(),
+        watching(config, unwatched.as_deref()),
     ) {
         tracing::info!("{line}");
     }
 }
 
-async fn finish(ending: Ending, session: &Session, server: RunningServer) -> Result<(), AppError> {
+fn watching<'a>(config: &Config, unwatched: Option<&'a str>) -> Watching<'a> {
+    match (config.watch(), unwatched) {
+        (false, _) => Watching::Disabled,
+        (true, Some(reason)) => Watching::Failed(reason),
+        (true, None) => Watching::On,
+    }
+}
+
+async fn finish(
+    ending: Ending,
+    session: &Session,
+    server: RunningServer,
+    interrupts: &mut Interrupts,
+) -> Result<(), AppError> {
     match ending {
         Ending::Interrupted | Ending::LastTabClosed => {
             tracing::info!("👋 shutting down");
             hand_off(session).await;
-            dispose(session, server).await;
+            dispose(session, server, interrupts).await;
             Ok(())
         }
         Ending::ServerFailed(error) => {
-            dispose(session, server).await;
+            dispose(session, server, interrupts).await;
             Err(error.into())
         }
     }
 }
 
-/// Ends the watch, then the sockets, so nothing recomputes for a page that is gone.
-async fn dispose(session: &Session, server: RunningServer) {
-    session.close().await;
-    server.stop().await;
+/// Ends the watch, then the sockets, so nothing recomputes for a page that is gone. A
+/// computation stuck in Git gets [`SHUTDOWN_GRACE`], or until the next signal, not forever.
+async fn dispose(session: &Session, server: RunningServer, interrupts: &mut Interrupts) {
+    let cleanup = async {
+        session.close().await;
+        server.stop().await;
+    };
+    match within_grace(SHUTDOWN_GRACE, interrupts.wait(), cleanup).await {
+        Shutdown::Clean => {}
+        Shutdown::GraceExpired => {
+            tracing::warn!("a computation is still running; ending without waiting for it");
+        }
+        Shutdown::Forced => tracing::warn!("signalled again; ending now"),
+    }
 }

@@ -12,7 +12,9 @@ use crate::domains::repository::names::repo_path::RepoPath;
 use crate::domains::repository::test_repo::TestRepo;
 use crate::domains::review::session::review_session::{Session, SessionConfig};
 use crate::domains::review::session::session_events::SessionEvent;
-use crate::domains::review::session::session_watch::{Watch, WatchRequest, WatcherFactory};
+use crate::domains::review::session::session_watch::{
+    Watch, WatchFailure, WatchRequest, WatcherFactory,
+};
 use crate::domains::review::snapshot::review_snapshot::Snapshot;
 use crate::domains::revisions::entry_request::EntryRequest;
 use crate::domains::revisions::revspec::Revspec;
@@ -26,6 +28,10 @@ pub(super) const PATIENCE: Duration = Duration::from_secs(10);
 pub(super) struct FakeWatchers {
     pub(super) started: std::sync::Mutex<Vec<(WatchRequest, mpsc::Sender<()>)>>,
     pub(super) stopped: std::sync::Arc<AtomicBool>,
+    /// Makes the factory fail, as the OS does when it has no watches left.
+    pub(super) refuse: AtomicBool,
+    /// Each time the factory was asked for a watch: had an earlier watch been stopped already?
+    pub(super) stopped_when_asked: std::sync::Mutex<Vec<bool>>,
 }
 
 pub(super) struct StopFlag(std::sync::Arc<AtomicBool>);
@@ -42,6 +48,13 @@ impl FakeWatchers {
         Arc::new(move |request| {
             let fake = Arc::clone(&fake);
             Box::pin(async move {
+                fake.stopped_when_asked
+                    .lock()
+                    .unwrap()
+                    .push(fake.stopped.load(Ordering::SeqCst));
+                if fake.refuse.load(Ordering::SeqCst) {
+                    return Err(WatchFailure("no watches left".to_owned()));
+                }
                 let (signal, dirty) = mpsc::channel(1);
                 fake.started.lock().unwrap().push((request, signal));
                 Ok(Watch {

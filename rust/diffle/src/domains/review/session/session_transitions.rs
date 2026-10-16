@@ -213,19 +213,22 @@ impl Session {
             names_branch,
             ignored: IgnoredPaths::default(),
             watch: Mutex::new(None),
+            unwatched: std::sync::Mutex::new(None),
             retired: watch::channel(false).0,
         });
         // The repository may have moved on while no server was watching it.
         self.relocate_comments(&next, &snapshot).await?;
-        self.watch(&next).await?;
-        let previous = self
-            .active
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
-            .replace(Arc::clone(&next));
-        if let Some(previous) = previous {
+        // Everything that can fail is done: from here the swap goes through.
+        let request = self.watch_request(&next).await?;
+        // One watcher at a time, or a switch between two live modes needs twice the OS watches.
+        if let Ok(previous) = self.active() {
             previous.stop_watching().await;
         }
+        self.arm(&next, request).await;
+        self.active
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .replace(next);
         self.latest.send_replace(Some(Arc::clone(&snapshot)));
         Ok(snapshot)
     }

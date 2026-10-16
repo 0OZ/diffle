@@ -18,40 +18,59 @@ use crate::domains::revisions::comparison::Liveness;
 use crate::domains::revisions::resolution::resolve_endpoints::resolve_endpoints;
 
 impl Session {
-    /// Starts watching what `active` needs, if a watcher was supplied and the review can change.
-    pub(super) async fn watch(self: &Arc<Self>, active: &Arc<Active>) -> Result<(), ReviewError> {
-        let Some(factory) = &self.watcher else {
-            return Ok(());
-        };
+    /// What `active` needs watched, if a watcher was supplied and the review can change. Reads
+    /// Git first, so a failure here leaves the review that is open as it was.
+    pub(super) async fn watch_request(
+        &self,
+        active: &Active,
+    ) -> Result<Option<WatchRequest>, ReviewError> {
+        if self.watcher.is_none() {
+            return Ok(None);
+        }
         let (git_dir, common_dir) = (
             self.repo.git_dir().to_path_buf(),
             self.repo.common_dir().to_path_buf(),
         );
-        let request = match active.mode.comparison().live() {
-            Liveness::Pinned => return Ok(()),
+        Ok(match active.mode.comparison().live() {
+            Liveness::Pinned => None,
             Liveness::Worktree => {
                 self.refresh_ignored(active).await?;
-                WatchRequest::Worktree {
+                Some(WatchRequest::Worktree {
                     root: self.repo.root().to_path_buf(),
                     git_dir,
                     common_dir,
                     ignored: active.ignored.clone(),
-                }
+                })
             }
-            Liveness::Refs => WatchRequest::Refs {
+            Liveness::Refs => Some(WatchRequest::Refs {
                 git_dir,
                 common_dir,
-            },
+            }),
+        })
+    }
+
+    /// Starts the watch `request` describes. A watcher that cannot start (the OS ran out of
+    /// watches) leaves the review open without live updates: it still shows the diff, and the
+    /// reviewer can reload.
+    pub(super) async fn arm(self: &Arc<Self>, active: &Arc<Active>, request: Option<WatchRequest>) {
+        let (Some(request), Some(factory)) = (request, &self.watcher) else {
+            return;
         };
-        let dirty = active.keep_watching(factory(request).await?).await;
-        let retired = active.retired.subscribe();
-        tokio::spawn(follow_changes(
-            Arc::downgrade(self),
-            Arc::downgrade(active),
-            dirty,
-            retired,
-        ));
-        Ok(())
+        match factory(request).await {
+            Ok(watch) => {
+                let dirty = active.keep_watching(watch).await;
+                tokio::spawn(follow_changes(
+                    Arc::downgrade(self),
+                    Arc::downgrade(active),
+                    dirty,
+                    active.retired.subscribe(),
+                ));
+            }
+            Err(failure) => {
+                tracing::warn!(%failure, "continuing without live updates");
+                active.set_unwatched(failure.to_string());
+            }
+        }
     }
 
     pub(super) async fn refresh_ignored(&self, active: &Active) -> Result<(), GitError> {

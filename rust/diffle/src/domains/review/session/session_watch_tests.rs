@@ -167,3 +167,75 @@ async fn switching_retires_the_previous_watch() {
     assert!(fake.stopped.load(Ordering::SeqCst));
     assert_eq!(fake.started.lock().unwrap().len(), 1);
 }
+
+fn two_commits() -> TestRepo {
+    let fixture = TestRepo::init();
+    fixture.commit("a.txt", "a\n");
+    fixture.commit("b.txt", "b\n");
+    fixture
+}
+
+#[tokio::test]
+async fn a_watcher_that_cannot_start_leaves_the_review_running() {
+    let fixture = two_commits();
+    let fake = Arc::new(FakeWatchers::default());
+    fake.refuse.store(true, Ordering::SeqCst);
+    let session = session(&fixture, FollowRefs::Auto, Some(fake.factory())).await;
+
+    // Out of OS watches is no reason to refuse to show the diff.
+    let shown = open(&session, &EntryRequest::Working).await;
+
+    assert_eq!(shown.parts().changed.len(), 0);
+    assert_eq!(
+        session.active().unwrap().unwatched().as_deref(),
+        Some("cannot watch for changes: no watches left")
+    );
+}
+
+#[tokio::test]
+async fn a_mode_switch_survives_a_watcher_that_cannot_start_and_the_next_one_tries_again() {
+    let fixture = two_commits();
+    let fake = Arc::new(FakeWatchers::default());
+    let session = session(&fixture, FollowRefs::Auto, Some(fake.factory())).await;
+    open(&session, &EntryRequest::Working).await;
+    assert_eq!(session.active().unwrap().unwatched(), None);
+
+    fake.refuse.store(true, Ordering::SeqCst);
+    let switched = session
+        .switch_mode(ModeRequest::Enter(revspec(&["HEAD~1..worktree"])))
+        .await
+        .unwrap();
+    assert!(
+        session
+            .active()
+            .unwrap()
+            .mode()
+            .range()
+            .spec()
+            .ends_at_worktree()
+    );
+    assert!(session.active().unwrap().unwatched().is_some());
+    assert_eq!(switched.parts().changed.len(), 1);
+
+    fake.refuse.store(false, Ordering::SeqCst);
+    session
+        .switch_mode(ModeRequest::Enter(EntryRequest::Working))
+        .await
+        .unwrap();
+    assert_eq!(session.active().unwrap().unwatched(), None);
+    assert_eq!(fake.started.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn the_previous_watch_is_stopped_before_the_next_one_starts() {
+    let fixture = two_commits();
+    let fake = Arc::new(FakeWatchers::default());
+    let session = session(&fixture, FollowRefs::Auto, Some(fake.factory())).await;
+    open(&session, &EntryRequest::Working).await;
+    session
+        .switch_mode(ModeRequest::Enter(revspec(&["HEAD~1..worktree"])))
+        .await
+        .unwrap();
+    // Two live watchers at once would double the OS watches a switch needs.
+    assert_eq!(*fake.stopped_when_asked.lock().unwrap(), [false, true]);
+}

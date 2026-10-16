@@ -79,6 +79,8 @@ pub struct Active {
     /// What a worktree watcher must not wake for; refreshed after each recompute.
     pub(super) ignored: IgnoredPaths,
     pub(super) watch: Mutex<Option<Box<dyn Send + Sync>>>,
+    /// Why the review is not being watched although a watcher was supplied.
+    pub(super) unwatched: std::sync::Mutex<Option<String>>,
     /// Set once this review has been replaced or the session closed; ends the task that answers
     /// the watcher, whether or not the watcher closes its channel.
     pub(super) retired: watch::Sender<bool>,
@@ -107,6 +109,22 @@ impl Active {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
+    }
+
+    /// Why live updates are off for this review, when a watcher was supplied but could not start.
+    #[must_use]
+    pub fn unwatched(&self) -> Option<String> {
+        self.unwatched
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    pub(super) fn set_unwatched(&self, reason: String) {
+        *self
+            .unwatched
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(reason);
     }
 
     pub(super) fn set_moved(&self, moved: Option<Moved>) {
