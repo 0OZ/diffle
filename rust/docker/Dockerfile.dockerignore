@@ -1,0 +1,11 @@
+**
+!package.json
+!package-lock.json
+!vite.config.ts
+!tsconfig.json
+!tsconfig.client.json
+!src
+!rust/Cargo.toml
+!rust/Cargo.lock
+!rust/rust-toolchain.toml
+!rust/diffle

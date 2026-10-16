@@ -1,0 +1,29 @@
+# Run the Rust review server in a container and open it from the host, the way a remote
+# machine would be used. From the repository root:
+#
+#   export DIFFLE_UID=$(id -u) DIFFLE_GID=$(id -g) DIFFLE_REPO=~/code/some-repo
+#   docker compose -f rust/docker/compose.yaml up --build
+#
+# then open http://localhost:4966 (the banner says 0.0.0.0, the address it listens on).
+# Every compose command, `down` and `logs` included, reads those variables.
+#
+# To review something other than the working tree, give `command` the flags below plus the
+# revspec, for example [..., "--keep-alive", "main"]: it replaces the whole default command.
+# Comments are stored in the mounted repository's `.git/diffle/`, so the mount must be writable
+# by DIFFLE_UID; the server stops with a permission error when it is not.
+name: diffle-server
+
+services:
+  diffle:
+    build:
+      context: ../..
+      dockerfile: rust/docker/Dockerfile
+    init: true
+    # The repository belongs to the host user; running as them keeps `.git/diffle/` theirs.
+    user: "${DIFFLE_UID:?set DIFFLE_UID to $(id -u)}:${DIFFLE_GID:?set DIFFLE_GID to $(id -g)}"
+    volumes:
+      - "${DIFFLE_REPO:?set DIFFLE_REPO to the repository to review}:/repo"
+    ports:
+      # Loopback only: the server has no login, so the host must not expose it.
+      - "127.0.0.1:${DIFFLE_PORT:-4966}:4966"
+    restart: unless-stopped
