@@ -1,0 +1,5 @@
+# The core aggregate every sibling domain may read; it reads nobody.
+hub-domain = repository
+
+# The read-model sink that reads every sibling; nobody reads it.
+view-domain = review
