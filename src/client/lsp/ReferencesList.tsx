@@ -1,4 +1,4 @@
-import { Dialog, DialogContent } from '@/client/ui/dialog.js';
+import { Dialog, DialogContent, DialogHeader } from '@/client/ui/dialog.js';
 import { twMerge } from 'tailwind-merge';
 import { FileCode2 } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -7,6 +7,7 @@ import { overflow } from '@/client/review/geometry.js';
 import { type Match, useStore } from '@/client/store.js';
 import type { ThemeChoice } from '@/client/theme.js';
 import { CodeLine, type HlToken, highlightLines, useHighlighted } from './highlight.js';
+import { Kbd } from '@/client/ui/kbd.js';
 
 interface Row {
   i: number;
@@ -75,16 +76,17 @@ export function ReferencesList() {
     <Dialog open onOpenChange={(_, { reason }) => reason !== 'escape-key' && close()}>
       <DialogContent
         aria-label="References"
+        showCloseButton={false}
         className={twMerge(
-          'flex max-h-[80vh] w-[min(60rem,_92vw)] flex-col overflow-hidden p-0',
+          'max-h-[80vh] w-[min(60rem,_92vw)] max-w-none overflow-hidden',
           refs.peek && 'h-[80vh] w-[min(96rem,_96vw)]',
         )}
       >
-        <div className="flex items-baseline gap-3.5 border-b border-b-border px-4.5 pt-3.5 pb-2.5">
-          <h3 className="m-0 text-[0.9375rem]">
+        <DialogHeader className="flex-row items-baseline gap-3.5 border-b px-4.5 pt-3.5 pb-2.5 max-sm:pb-2.5">
+          <h2 className="font-heading text-[0.9375rem] leading-normal font-bold">
             {refs.kind === 'types' ? (
               <>
-                <code className="rounded-[0.3125rem] bg-hover px-1.5 py-[1px] font-mono text-foreground">
+                <code className="rounded-[0.3125rem] bg-accent px-1.5 py-[1px] font-mono text-foreground">
                   {refs.symbol}
                 </code>{' '}
                 has {items.length} types in its signature; pick one
@@ -92,23 +94,23 @@ export function ReferencesList() {
             ) : (
               <>
                 {items.length} reference{items.length === 1 ? '' : 's'} to{' '}
-                <code className="rounded-[0.3125rem] bg-hover px-1.5 py-[1px] font-mono text-foreground">
+                <code className="rounded-[0.3125rem] bg-accent px-1.5 py-[1px] font-mono text-foreground">
                   {refs.symbol}
                 </code>
               </>
             )}
-          </h3>
-          <span className="ml-auto text-[0.6875rem] whitespace-nowrap text-muted">
-            <kbd>j</kbd> <kbd>k</kbd> move · <kbd>Space</kbd> peek
+          </h2>
+          <span className="ml-auto text-[0.6875rem] whitespace-nowrap text-muted-foreground">
+            <Kbd>j</Kbd> <Kbd>k</Kbd> move · <Kbd>Space</Kbd> peek
             {refs.peek && (
               <>
                 {' '}
-                · <kbd>J</kbd> <kbd>K</kbd> scroll
+                · <Kbd>J</Kbd> <Kbd>K</Kbd> scroll
               </>
             )}{' '}
-            · <kbd>Enter</kbd> jump · <kbd>Esc</kbd> {refs.peek ? 'back' : 'close'}
+            · <Kbd>Enter</Kbd> jump · <Kbd>Esc</Kbd> {refs.peek ? 'back' : 'close'}
           </span>
-        </div>
+        </DialogHeader>
         <div className={twMerge('flex min-h-0 flex-1', !refs.peek && 'contents')}>
           <div
             className={twMerge(
@@ -119,10 +121,10 @@ export function ReferencesList() {
           >
             {groups.map((g) => (
               <section className="[&+section]:mt-2.5" key={g.path}>
-                <header className="sticky top-0 z-1 mb-[2px] flex items-center gap-2 rounded-lg border border-border bg-hover px-2.5 py-1.5 font-mono text-[0.75rem] leading-[normal] [&>svg]:flex-none [&>svg]:text-muted">
+                <header className="sticky top-0 z-1 mb-[2px] flex items-center gap-2 rounded-lg border border-border bg-accent px-2.5 py-1.5 font-mono text-[0.75rem] leading-[normal] [&>svg]:flex-none [&>svg]:text-muted-foreground">
                   <FileCode2 size="0.875rem" />
                   <FilePath path={g.path} nowrap className="flex-1" />
-                  <span className="ml-auto rounded-[0.625rem] border border-border bg-canvas px-1.75 py-0 text-[0.6875rem] text-muted">
+                  <span className="ml-auto rounded-[0.625rem] border border-border bg-background px-1.75 py-0 text-[0.6875rem] text-muted-foreground">
                     {g.rows.length}
                   </span>
                 </header>
@@ -232,7 +234,7 @@ function ReferencePeek({
   if (!match) return <div className="flex-1" />;
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      <div className="flex items-center gap-2 border-b border-b-border px-3.5 py-1.5 font-mono text-[0.75rem] text-muted [&>svg]:flex-none">
+      <div className="flex items-center gap-2 border-b border-b-border px-3.5 py-1.5 font-mono text-[0.75rem] text-muted-foreground [&>svg]:flex-none">
         <FileCode2 size="0.875rem" />
         <FilePath path={match.path} nowrap className="min-w-0 flex-1" />
         <span className="ml-auto">:{match.line}</span>
@@ -253,13 +255,13 @@ function ReferencePeek({
                 data-target={n === line}
                 className={twMerge(
                   'group grid cursor-pointer grid-cols-[3.25rem_1fr] gap-3 pr-3.5',
-                  n === line && 'bg-hover',
+                  n === line && 'bg-accent',
                 )}
                 // A drag that selected text is a copy, not a jump.
                 onClick={() => getSelection()?.isCollapsed !== false && onPick(n)}
               >
                 {/* Hover tints the line number alone, as the diff view does. */}
-                <span className="pr-1.5 text-right text-muted group-hover:bg-hover group-hover:text-foreground">
+                <span className="pr-1.5 text-right text-muted-foreground group-hover:bg-accent group-hover:text-foreground">
                   {n}
                 </span>
                 <span className="whitespace-pre">
@@ -269,7 +271,7 @@ function ReferencePeek({
             );
           })
         ) : file && 'message' in file ? (
-          <p className="px-3.5 text-muted">{file.message}</p>
+          <p className="px-3.5 text-muted-foreground">{file.message}</p>
         ) : null}
       </div>
     </div>
@@ -292,12 +294,12 @@ const RefRow = memo(function RefRow({
     <div
       data-active={on}
       className={twMerge(
-        `grid cursor-pointer grid-cols-[3.25rem_1fr] gap-3 rounded-md px-2.5 py-0.75 font-mono text-[0.75rem] leading-[1.6] hover:bg-surface ${on ? 'bg-hover hover:bg-hover' : ''}`,
+        `grid cursor-pointer grid-cols-[3.25rem_1fr] gap-3 rounded-md px-2.5 py-0.75 font-mono text-[0.75rem] leading-[1.6] hover:bg-muted ${on ? 'bg-accent hover:bg-accent' : ''}`,
       )}
       onMouseDown={(e) => e.preventDefault()}
       onClick={() => onPick(row.i)}
     >
-      <span className="text-right text-muted">{row.line}</span>
+      <span className="text-right text-muted-foreground">{row.line}</span>
       <span className="overflow-hidden text-ellipsis whitespace-pre">
         <CodeLine tokens={tokens} fallback={row.text} />
       </span>

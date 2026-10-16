@@ -25,7 +25,7 @@ vi.mock('@/client/clipboard.js', () => ({ copyText: vi.fn() }));
 import { copyText } from '@/client/clipboard.js';
 import { Header } from '@/client/header/Header.js';
 
-function render(...statuses: Partial<LspServerStatus>[]) {
+function setServers(...statuses: Partial<LspServerStatus>[]) {
   state.lsp.servers = statuses.map((status, i) => ({
     name: `server${i}`,
     command: `server${i}`,
@@ -33,45 +33,82 @@ function render(...statuses: Partial<LspServerStatus>[]) {
     state: 'ready',
     ...status,
   }));
+}
+
+function render(...statuses: Partial<LspServerStatus>[]) {
+  setServers(...statuses);
   const container = document.createElement('div');
   container.innerHTML = renderToStaticMarkup(createElement(Header));
   return container;
 }
 
-describe('LSP status indicator', () => {
-  it('dismisses on outside click, Escape, and the close button', async () => {
-    const container = document.createElement('div');
-    document.body.append(container);
-    const root = createRoot(container);
-    try {
-      await act(async () => root.render(createElement(Header)));
-      const popup = container.querySelector('details')!;
-      const summary = popup.querySelector('summary')!;
-      popup.open = true;
-      popup.querySelector('section')!.dispatchEvent(new Event('pointerdown', { bubbles: true }));
-      expect(popup.open).toBe(true);
-      document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
-      expect(popup.open).toBe(false);
+const trigger = (container: Element) =>
+  container.querySelector<HTMLButtonElement>('button[aria-label^="Language servers"]')!;
+// The popover renders into a portal on the body, outside the header's container.
+const popup = () => document.querySelector<HTMLElement>('[aria-label="Language server status"]');
 
-      popup.open = true;
-      const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
-      document.dispatchEvent(escape);
-      expect(popup.open).toBe(false);
-      expect(escape.defaultPrevented).toBe(true);
-      expect(document.activeElement).toBe(summary);
-
-      popup.open = true;
-      await act(async () =>
-        container.querySelector<HTMLButtonElement>('[aria-label="Close language server status"]')!.click(),
-      );
-      expect(popup.open).toBe(false);
-      expect(document.activeElement).toBe(summary);
-    } finally {
+/** Mounts the header, opens the status popover, and expands every server's details. */
+async function mount(...statuses: Partial<LspServerStatus>[]) {
+  setServers(...statuses);
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  await act(async () => root.render(createElement(Header)));
+  return {
+    container,
+    open: async () => {
+      await act(async () => trigger(container).click());
+      return popup()!;
+    },
+    expand: async () => {
+      for (const details of popup()!.querySelectorAll<HTMLElement>('[data-slot="collapsible-trigger"]'))
+        await act(async () => details.click());
+    },
+    unmount: async () => {
       await act(async () => root.unmount());
       container.remove();
+    },
+  };
+}
+
+describe('LSP status indicator', () => {
+  it('dismisses on outside click, Escape, and the close button, returning focus to the trigger', async () => {
+    const view = await mount();
+    try {
+      await view.open();
+      expect(popup()).not.toBeNull();
+      await act(async () => {
+        popup()!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse', button: 0 }));
+      });
+      expect(popup()).not.toBeNull();
+      // The popover starts listening for outside presses a moment after it opens.
+      await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+      await act(async () => {
+        document.body.dispatchEvent(
+          new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse', button: 0 }),
+        );
+        document.body.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+      });
+      expect(popup()).toBeNull();
+
+      await view.open();
+      await act(async () => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      });
+      expect(popup()).toBeNull();
+      expect(document.activeElement).toBe(trigger(view.container));
+
+      await view.open();
+      await act(async () =>
+        document.querySelector<HTMLButtonElement>('[aria-label="Close language server status"]')!.click(),
+      );
+      expect(popup()).toBeNull();
+      expect(document.activeElement).toBe(trigger(view.container));
+    } finally {
+      await view.unmount();
     }
   });
-  // Header's summary names the most severe state across all servers.
+  // Header's trigger names the most severe state across all servers.
   it.each<[Partial<LspServerStatus>[], string]>([
     [[{}], 'Language servers'],
     [[{}, { stderr: 'log' }], 'Language servers: logs'],
@@ -84,55 +121,59 @@ describe('LSP status indicator', () => {
     ],
     [[{ notice: { severity: 'error', message: 'e' } }, { state: 'unavailable' }], 'Language servers: unavailable'],
   ])('labels %j as %s', (servers, label) => {
-    expect(
-      render(...servers)
-        .querySelector('summary')!
-        .getAttribute('aria-label'),
-    ).toBe(label);
+    expect(trigger(render(...servers)).getAttribute('aria-label')).toBe(label);
   });
 
-  it('shows reported work, notices, and stderr instead of claiming readiness', () => {
-    const popup = render(
+  it('shows reported work, notices, and stderr instead of claiming readiness', async () => {
+    const view = await mount(
       { activity: ['Loading workspace: dependencies'] },
       { notice: { severity: 'error', message: 'Workspace loading failed' }, stderr: 'Missing build tool' },
       {},
-    ).querySelector('section[aria-label="Language server status"]')!.textContent;
-    expect(popup).toContain('Loading workspace: dependencies');
-    expect(popup).toContain('Working');
-    expect(popup).toContain('Workspace loading failed');
-    expect(popup).toContain('Missing build tool');
-    expect(popup).toContain('Connected');
+    );
+    try {
+      await view.open();
+      await view.expand();
+      const text = popup()!.textContent;
+      expect(text).toContain('Loading workspace: dependencies');
+      expect(text).toContain('Working');
+      expect(text).toContain('Workspace loading failed');
+      expect(text).toContain('Missing build tool');
+      expect(text).toContain('Connected');
+    } finally {
+      await view.unmount();
+    }
   });
 
-  it('names missing servers compactly with install candidates in the tooltip', () => {
+  it('names missing servers compactly with install candidates in the tooltip', async () => {
     state.lsp.missing = [
       { language: 'rust', tried: ['rust-analyzer'] },
       { language: 'python', tried: [] },
     ];
+    const view = await mount();
     try {
-      const popup = render().querySelector('section')!;
-      expect(popup.textContent).toContain('Not on PATH');
-      expect(popup.textContent).toContain('Disabled');
-      expect(popup.querySelector('[title="rust-analyzer"]')!.textContent).toContain('rust');
+      const open = await view.open();
+      expect(open.textContent).toContain('Not on PATH');
+      expect(open.textContent).toContain('Disabled');
+      expect(open.querySelector('[title="rust-analyzer"]')!.textContent).toContain('rust');
     } finally {
       state.lsp.missing = [];
+      await view.unmount();
     }
   });
 
   it.each([true, false])('reports clipboard success=%s and copies the full log', async (success) => {
     const text = 'first line\n' + 'long line '.repeat(200);
-    render({ stderr: text });
     vi.mocked(copyText).mockResolvedValue(success);
-    const container = document.createElement('div');
-    const root = createRoot(container);
+    const view = await mount({ stderr: text });
     try {
-      await act(async () => root.render(createElement(Header)));
-      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Copy stderr"]')!.click());
+      await view.open();
+      await view.expand();
+      await act(async () => popup()!.querySelector<HTMLButtonElement>('[aria-label="Copy stderr"]')!.click());
       expect(copyText).toHaveBeenLastCalledWith(text);
-      expect(container.textContent).toContain(success ? 'Copied' : 'Copy failed. Select the log');
-      expect(container.querySelector('pre[aria-label="stderr log"]')!.textContent).toBe(text);
+      expect(popup()!.textContent).toContain(success ? 'Copied' : 'Copy failed. Select the log');
+      expect(popup()!.querySelector('pre[aria-label="stderr log"]')!.textContent).toBe(text);
     } finally {
-      await act(async () => root.unmount());
+      await view.unmount();
     }
   });
 });

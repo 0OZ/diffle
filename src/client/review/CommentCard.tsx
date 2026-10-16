@@ -1,6 +1,7 @@
-import { CopyIcon } from '@/client/ui/CopyIcon.js';
+import { CopyIcon } from '@/client/components/CopyIcon.js';
 import { twMerge } from 'tailwind-merge';
-import { Button } from '@/client/ui/Button.js';
+import { Button } from '@/client/ui/button.js';
+import { ActionButton } from '@/client/components/ActionButton.js';
 import {
   AlertTriangle,
   Check,
@@ -20,8 +21,10 @@ import { copyText } from '@/client/clipboard.js';
 import { Markdown } from '@/client/Markdown.js';
 import { anchorLabel, composerKey, exportLabel, type ExportOutcome } from '@/client/model.js';
 import { useStore } from '@/client/store.js';
-import { ButtonLabel } from '@/client/ui/ButtonLabel.js';
+import { ButtonLabel } from '@/client/components/ButtonLabel.js';
 import { useConfirm } from '@/client/useConfirm.js';
+import { Kbd } from '@/client/ui/kbd.js';
+import { Textarea } from '@/client/ui/textarea.js';
 
 /** A thread rendered inline under its last anchored line: messages, reply composer, resolve. */
 export function CommentCard({ thread }: { thread: CommentThread }) {
@@ -58,10 +61,10 @@ export function CommentCard({ thread }: { thread: CommentThread }) {
   return (
     <div
       className={twMerge(
-        `mx-2 my-1 overflow-hidden rounded-md border border-border bg-card p-0 font-sans text-[0.8125rem] shadow-card [&_.markdown]:[word-break:break-word] ${thread.stale ? 'border-dashed' : ''} ${thread.resolved ? 'opacity-70' : ''} ${focused ? 'border-accent shadow-[0_0_0_1px_var(--accent),_var(--review-card-shadow)]' : ''}`,
+        `mx-2 my-1 overflow-hidden rounded-md border border-border bg-card p-0 font-sans text-[0.8125rem] shadow-card [&_.markdown]:[word-break:break-word] ${thread.stale ? 'border-dashed' : ''} ${thread.resolved ? 'opacity-70' : ''} ${focused ? 'border-primary shadow-[0_0_0_1px_var(--accent),_var(--review-card-shadow)]' : ''}`,
       )}
     >
-      <div className="flex items-center gap-2 border-b border-b-border bg-hover py-1 pr-1.5 pl-2.5 text-[0.75rem] text-muted [&>svg]:flex-none [&>svg]:text-accent">
+      <div className="flex items-center gap-2 border-b border-b-border bg-accent py-1 pr-1.5 pl-2.5 text-[0.75rem] text-muted-foreground [&>svg]:flex-none [&>svg]:text-primary">
         <MessageSquare size="0.8125rem" />
         <span className="font-mono font-semibold text-foreground">{anchorLabel(a)}</span>
         {thread.stale && (
@@ -86,7 +89,7 @@ export function CommentCard({ thread }: { thread: CommentThread }) {
         {solo && (
           <Button
             variant="ghost"
-            icon
+            size="icon-sm"
             onClick={() => setEditingId(editingSolo ? null : solo.id)}
             title={editingSolo ? 'Cancel' : 'Edit (e)'}
           >
@@ -94,9 +97,9 @@ export function CommentCard({ thread }: { thread: CommentThread }) {
           </Button>
         )}
         {canExport && (
-          <Button
+          <ActionButton
             variant="ghost"
-            icon={!post.armed && !posted}
+            size={!post.armed && !posted ? 'icon-sm' : 'sm'}
             feedback={post.armed ? 'confirm' : posted ? 'posted' : undefined}
             disabled={posting || thread.stale}
             onClick={post.fire}
@@ -110,11 +113,11 @@ export function CommentCard({ thread }: { thread: CommentThread }) {
           >
             {posted ? <Check size="0.875rem" /> : <GitPullRequestArrow size="0.875rem" />}
             <ButtonLabel text={post.armed ? 'Add?' : posted && exportLabel(posted)} />
-          </Button>
+          </ActionButton>
         )}
         <Button
           variant="ghost"
-          icon
+          size="icon-sm"
           onClick={() => (replying ? closeReply() : openReply(thread.id))}
           title={replying ? 'Cancel reply' : 'Reply'}
         >
@@ -122,23 +125,23 @@ export function CommentCard({ thread }: { thread: CommentThread }) {
         </Button>
         <Button
           variant="ghost"
-          icon
+          size="icon-sm"
           onClick={() => void setResolved(thread.id, !thread.resolved)}
           title={thread.resolved ? 'Reopen (R)' : 'Resolve (R)'}
         >
           {thread.resolved ? <RotateCcw size="0.875rem" /> : <Check size="0.875rem" />}
         </Button>
-        <Button
+        <ActionButton
           variant="ghost"
           danger
-          icon={!del.armed}
+          size={!del.armed ? 'icon-sm' : 'sm'}
           feedback={del.armed ? 'confirm' : undefined}
           onClick={del.fire}
           title={del.armed ? 'Click again to delete this thread' : 'Delete thread (dd)'}
         >
           <Trash2 size="0.875rem" />
           <ButtonLabel text={del.armed && 'Delete?'} />
-        </Button>
+        </ActionButton>
       </div>
       {thread.messages.map((m, i) => (
         <Message key={m.id} thread={thread} message={m} first={i === 0} />
@@ -167,36 +170,36 @@ function Message({ thread, message, first }: { thread: CommentThread; message: C
   return (
     <div className="px-2.5 py-2 data-[first=false]:border-t data-[first=false]:border-border" data-first={first}>
       {threaded && (
-        <div className="mb-[2px] flex items-center gap-1.5 text-[0.6875rem] text-muted">
+        <div className="mb-[2px] flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
           <span className="flex-1" />
           <CopyMessageButton threadId={thread.id} messageId={message.id} size="0.75rem" />
           <Button
             variant="ghost"
-            icon
+            size="icon-sm"
             onClick={() => setEditingId(editing ? null : message.id)}
             title={editing ? 'Cancel' : 'Edit (e)'}
           >
             {editing ? <X size="0.75rem" /> : <Pencil size="0.75rem" />}
           </Button>
           {!first && (
-            <Button
+            <ActionButton
               variant="ghost"
               danger
-              icon={!del.armed}
+              size={!del.armed ? 'icon-sm' : 'sm'}
               feedback={del.armed ? 'confirm' : undefined}
               onClick={del.fire}
               title={del.armed ? 'Click again to delete this reply' : 'Delete this reply'}
             >
               <Trash2 size="0.75rem" />
               <ButtonLabel text={del.armed && 'Delete?'} />
-            </Button>
+            </ActionButton>
           )}
         </div>
       )}
       {editing ? (
-        <div className="rounded-md border-0 bg-surface p-0">
-          <textarea
-            className="min-h-17.5 w-full resize-y rounded-sm border border-border bg-canvas p-1.5 font-mono text-[0.75rem] leading-[1.5]"
+        <div className="rounded-md border-0 bg-muted p-0">
+          <Textarea
+            className="font-mono text-[0.75rem] leading-[1.5]"
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
@@ -206,7 +209,7 @@ function Message({ thread, message, first }: { thread: CommentThread; message: C
             autoFocus
           />
           <div className="mt-1.5 flex items-center justify-end gap-1.5">
-            <Button variant="primary" onClick={save}>
+            <Button onClick={save} size="sm">
               Save
             </Button>
           </div>
@@ -230,9 +233,9 @@ function CopyMessageButton({ threadId, messageId, size }: { threadId: string; me
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
   return (
-    <Button
+    <ActionButton
       variant="ghost"
-      icon
+      size="icon-sm"
       feedback={done ? 'copied' : undefined}
       className="relative"
       title="Copy this comment as a prompt"
@@ -253,7 +256,7 @@ function CopyMessageButton({ threadId, messageId, size }: { threadId: string; me
       <CopyIcon done={done} size={size}>
         <Copy size={size} />
       </CopyIcon>
-    </Button>
+    </ActionButton>
   );
 }
 
@@ -279,9 +282,9 @@ function ReplyComposer({ threadId }: { threadId: string }) {
     }
   };
   return (
-    <div className="@container mx-2.5 mt-0 mb-2.5 rounded-md border border-accent bg-surface p-2">
-      <textarea
-        className="min-h-17.5 w-full resize-y rounded-sm border border-border bg-canvas p-1.5 font-mono text-[0.75rem] leading-[1.5]"
+    <div className="@container mx-2.5 mt-0 mb-2.5 rounded-md border border-primary bg-muted p-2">
+      <Textarea
+        className="font-mono text-[0.75rem] leading-[1.5]"
         ref={ref}
         value={text}
         placeholder="Reply…"
@@ -292,11 +295,13 @@ function ReplyComposer({ threadId }: { threadId: string }) {
         }}
       />
       <div className="mt-1.5 flex flex-wrap items-center justify-end gap-1.5">
-        <span className="mr-auto text-[0.75rem] whitespace-nowrap text-muted @max-[26rem]:hidden">
-          <kbd>⌘/Ctrl</kbd>+<kbd>Enter</kbd> to send · <kbd>Esc</kbd> to cancel
+        <span className="mr-auto text-[0.75rem] whitespace-nowrap text-muted-foreground @max-[26rem]:hidden">
+          <Kbd>⌘/Ctrl</Kbd>+<Kbd>Enter</Kbd> to send · <Kbd>Esc</Kbd> to cancel
         </span>
-        <Button onClick={closeReply}>Cancel</Button>
-        <Button variant="primary" onClick={() => void submit()} disabled={!text.trim() || busy}>
+        <Button variant="outline" onClick={closeReply} size="sm">
+          Cancel
+        </Button>
+        <Button onClick={() => void submit()} disabled={!text.trim() || busy} size="sm">
           Reply
         </Button>
       </div>

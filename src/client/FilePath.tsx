@@ -27,7 +27,7 @@ export function FilePath({
       title={tooltip ? path : undefined}
     >
       {dirs.length > 0 && (
-        <span className="text-muted">
+        <span className="text-muted-foreground">
           {dirs.map((d, i) => (
             <Fragment key={i}>
               {d}/<wbr />

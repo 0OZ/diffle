@@ -1,7 +1,7 @@
 import { useEffect, useRef, type RefObject } from 'react';
 import { Markdown } from '@/client/Markdown.js';
 import { useStore, type HoverState } from '@/client/store.js';
-import { TipSurface } from '@/client/ui/TipSurface.js';
+import { TipSurface } from '@/client/components/TipSurface.js';
 import type { TokenTarget } from './target.js';
 
 /** Pointer rest before the server is asked; moving across tokens asks nothing. */

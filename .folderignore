@@ -1,0 +1,2 @@
+# Vendored coss ui: the shadcn CLI writes every component flat into this folder (components.json alias `ui`).
+src/client/ui

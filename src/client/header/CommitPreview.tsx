@@ -66,7 +66,7 @@ export function CommitPreview({
           className={twMerge(
             current?.error
               ? 'm-0 text-[0.75rem] wrap-anywhere text-del'
-              : 'm-0 p-0 text-[0.75rem] whitespace-normal text-muted',
+              : 'm-0 p-0 text-[0.75rem] whitespace-normal text-muted-foreground',
           )}
           role="status"
         >
@@ -81,7 +81,7 @@ export function CommitPreview({
             ] as const
           ).map(([ref, commit], index) => (
             <div key={index}>
-              <div className="flex justify-between gap-2 font-mono text-[0.6875rem] leading-[1.5] text-muted">
+              <div className="flex justify-between gap-2 font-mono text-[0.6875rem] leading-[1.5] text-muted-foreground">
                 <span>{ref}</span>
                 {commit && <span title={commit.sha}>{commit.short}</span>}
               </div>

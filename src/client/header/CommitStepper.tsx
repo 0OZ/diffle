@@ -1,6 +1,6 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useStore } from '@/client/store.js';
-import { Button } from '@/client/ui/Button.js';
+import { Button } from '@/client/ui/button.js';
 
 /**
  * Previous / next commit in a single-commit view, the mouse's share of < / >. Next walks
@@ -16,7 +16,7 @@ export function CommitStepper() {
     <span className="inline-flex items-center gap-0.5">
       <Button
         variant="ghost"
-        icon
+        size="icon-sm"
         disabled={!commit.parent}
         onClick={() => step(-1)}
         title="Previous commit (<)"
@@ -26,7 +26,7 @@ export function CommitStepper() {
       </Button>
       <Button
         variant="ghost"
-        icon
+        size="icon-sm"
         disabled={!commit.child}
         onClick={() => step(1)}
         title="Next commit toward HEAD (>)"

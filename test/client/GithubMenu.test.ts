@@ -31,20 +31,28 @@ afterEach(async () => {
   await act(() => root.unmount());
   host.remove();
 });
+// The popover renders into a portal on the body, outside the host.
+const popup = () => document.querySelector('[role="dialog"]');
 const press = (key: string) =>
   document.body.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
 
 it('o opens repository information during lookup; Escape and outside clicks dismiss it', async () => {
   await act(() => root.render(createElement(App)));
   await act(() => press('o'));
-  expect(host.querySelector('[role="dialog"]')).not.toBeNull();
-  expect(host.textContent).toContain('Loading…');
-  expect(host.textContent).not.toContain('No GitHub origin');
+  expect(popup()).not.toBeNull();
+  expect(popup()!.textContent).toContain('Loading…');
+  expect(popup()!.textContent).not.toContain('No GitHub origin');
   await act(() => press('Escape'));
-  expect(host.querySelector('[role="dialog"]')).toBeNull();
+  expect(popup()).toBeNull();
   await act(() => host.querySelector('button')!.click());
-  await act(() => document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })));
-  expect(host.querySelector('[role="dialog"]')).toBeNull();
+  expect(popup()).not.toBeNull();
+  // The popover starts listening for outside presses a moment after it opens.
+  await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+  await act(() => {
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse', button: 0 }));
+    document.body.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+  });
+  expect(popup()).toBeNull();
 });
 
 it('shows PR metadata from another repository, then the origin when no PR matches', async () => {
@@ -63,10 +71,10 @@ it('shows PR metadata from another repository, then the origin when no PR matche
   };
   useStore.setState({ githubMenuOpen: true, github: { status: 'ready', data: metadata } });
   await act(() => root.render(createElement(App)));
-  expect(host.textContent).toContain('#42 Improve parsing');
-  expect(host.textContent).toContain('upstream/project');
-  expect(host.textContent).toContain(metadata.reason);
-  expect(host.querySelector(`a[href="${metadata.pullRequest!.url}"]`)).not.toBeNull();
+  expect(popup()!.textContent).toContain('#42 Improve parsing');
+  expect(popup()!.textContent).toContain('upstream/project');
+  expect(popup()!.textContent).toContain(metadata.reason);
+  expect(popup()!.querySelector(`a[href="${metadata.pullRequest!.url}"]`)).not.toBeNull();
   await act(() =>
     useStore.setState({
       github: {
@@ -75,7 +83,7 @@ it('shows PR metadata from another repository, then the origin when no PR matche
       },
     }),
   );
-  expect(host.textContent).toContain('Lookup failed: gh is not installed');
-  expect(host.textContent).toContain('alice/fork');
-  expect(host.querySelector('a')?.href).toBe('https://github.com/alice/fork');
+  expect(popup()!.textContent).toContain('Lookup failed: gh is not installed');
+  expect(popup()!.textContent).toContain('alice/fork');
+  expect(popup()!.querySelector('a')?.href).toBe('https://github.com/alice/fork');
 });

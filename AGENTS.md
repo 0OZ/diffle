@@ -16,7 +16,8 @@ Diffle is a local Git review app: a Node/Hono server owns repository state; a Re
 - `src/client/store.ts`: Zustand state and effects; guard async commits with the current generation.
 - `src/client/model.ts`: pure state functions and item identity, kept separate to avoid store cycles.
 - `src/client/review/ReviewPane.tsx`: `CodeView` rendering, measurement, and scroll placement.
-- `src/client/ui/dialog.tsx`, `tooltip.tsx`: shadcn components on Base UI (`components.json`, `@/` alias). We own them, restyled to the theme tokens; add another with `npx shadcn add`, then restyle it the same way. Not `button`: it would collide with `Button.tsx` on case-insensitive filesystems. `TipSurface` hangs a tip at a viewport box; `TitleTooltips` turns every `title` into one.
+- `src/client/ui/`: vendored coss ui on Base UI (`npx shadcn@latest add @coss/<name>`, registry in `components.json`); the `.folderignore` entry is why it stays flat. Its tokens (`primary`, `muted`, `border`, ...) map to the theme's own variables in `styles.css`, and `dark:` follows `data-theme`. After an `add`: `.js` import suffixes, `oxfmt`, `not-dark:bg-clip-padding` to `bg-clip-padding` (the class lint does not know `not-dark`), and keep our edits to `tooltip.tsx` (`collisionPadding`, `positionMethod`, `role="tooltip"` for `TipSurface`) and `kbd.tsx` (a border). Tailwind's Preflight stays out; `base.css` holds the bits coss assumes (border colour, flat form controls, fieldsets), and `text-sm` is the body size.
+- `src/client/components/`: our compositions over `ui/`. `ActionButton` carries the two-step and acknowledged states with `ButtonLabel`, `SegmentedControl` is an always-one `ToggleGroup`, `TipSurface` hangs a tip at a viewport box, `TitleTooltips` turns every `title` into one.
 
 ## Preserve these invariants
 

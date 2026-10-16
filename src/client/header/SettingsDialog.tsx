@@ -1,5 +1,11 @@
-import { Dialog, DialogContent } from '@/client/ui/dialog.js';
-import { Button } from '@/client/ui/Button.js';
+import { Button } from '@/client/ui/button.js';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogPanel, DialogTitle } from '@/client/ui/dialog.js';
+import { Field, FieldDescription, FieldLabel } from '@/client/ui/field.js';
+import { Fieldset, FieldsetLegend } from '@/client/ui/fieldset.js';
+import { Input } from '@/client/ui/input.js';
+import { Label } from '@/client/ui/label.js';
+import { Radio, RadioGroup } from '@/client/ui/radio-group.js';
+import { Textarea } from '@/client/ui/textarea.js';
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '@/client/store.js';
 import type { FollowRefs } from '@/shared/protocol.js';
@@ -61,70 +67,85 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     <Dialog open onOpenChange={onClose}>
       <DialogContent
         aria-label="Settings"
-        className="[&_code]:rounded-sm [&_code]:bg-hover [&_code]:px-1 [&_code]:font-mono"
+        showCloseButton={false}
+        className="max-w-xl [&_code]:rounded-sm [&_code]:bg-accent [&_code]:px-1 [&_code]:font-mono"
       >
-        <h3 className="m-0 mb-2">Auto-viewed patterns</h3>
-        <p className="m-0 mb-2 text-muted">
-          Matching files start collapsed and viewed. One glob per line: <code>*.lock</code> matches a file name,{' '}
-          <code>**/generated/**</code> a path.
-        </p>
-        <textarea
-          className="min-h-40 w-full rounded-md border border-border bg-surface p-2 font-mono text-[0.75rem]"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          spellCheck={false}
-          autoFocus
-        />
-        <h3 className="m-0 mt-[14px] mb-2">Context lines</h3>
-        <p className="m-0 mb-2 text-muted">Unchanged lines around each change.</p>
-        <input
-          type="number"
-          min={0}
-          max={10000}
-          value={context}
-          onChange={(e) => setContext(e.target.value)}
-          className="w-[100px]"
-        />
-        <h3 className="m-0 mt-[14px] mb-2">Reload behavior</h3>
-        <p className="m-0 mb-2 text-muted">Reload when a compared ref moves.</p>
-        <div role="radiogroup" aria-label="Reload behavior" className="flex flex-col gap-1">
-          {FOLLOW_REFS.map(([value, label]) => (
-            <label key={value} className="flex cursor-pointer items-center gap-1.5">
-              <input
-                type="radio"
-                name="follow-refs"
-                value={value}
-                checked={followRefs === value}
-                onChange={() => setFollowRefs(value)}
-              />
-              {label}
-            </label>
-          ))}
-        </div>
-        <h3 className="m-0 mt-[14px] mb-2">Language servers</h3>
-        <p className="m-0 mb-2 text-muted">
-          <code>diffle lsp</code> lists them; <code>diffle config set-lsp</code> overrides one.
-        </p>
-        {overrides.length > 0 && (
-          <p className="m-0 mb-2 text-muted">
-            Overrides:{' '}
-            {overrides.map(([language, command], i) => (
-              <span key={language}>
-                {i > 0 && ', '}
-                {language} <code>{command || '(off)'}</code>
-              </span>
-            ))}
-          </p>
-        )}
-        <div className="mt-2.5 flex items-center gap-1.5">
-          <span className="flex-1 text-[0.75rem] text-muted" title="Installed diffle version">
+        <DialogHeader>
+          <DialogTitle>Settings</DialogTitle>
+        </DialogHeader>
+        <DialogPanel className="flex flex-col gap-5">
+          <Field>
+            <FieldLabel>Auto-viewed patterns</FieldLabel>
+            <FieldDescription>
+              Matching files start collapsed and viewed. One glob per line: <code>*.lock</code> matches a file name,{' '}
+              <code>**/generated/**</code> a path.
+            </FieldDescription>
+            <Textarea
+              className="font-mono text-[0.75rem] [&_textarea]:min-h-40"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              spellCheck={false}
+              autoFocus
+            />
+          </Field>
+          <Field>
+            <FieldLabel>Context lines</FieldLabel>
+            <FieldDescription>Unchanged lines around each change.</FieldDescription>
+            <Input
+              type="number"
+              min={0}
+              max={10000}
+              value={context}
+              onChange={(e) => setContext(e.target.value)}
+              className="w-28"
+            />
+          </Field>
+          <Fieldset className="flex flex-col gap-2">
+            <FieldsetLegend>Reload behavior</FieldsetLegend>
+            <p className="m-0 text-xs text-muted-foreground">Reload when a compared ref moves.</p>
+            <RadioGroup
+              aria-label="Reload behavior"
+              className="gap-2"
+              value={followRefs}
+              onValueChange={(value) => setFollowRefs(value as FollowRefs)}
+            >
+              {FOLLOW_REFS.map(([value, label]) => (
+                <Label key={value} className="cursor-pointer font-normal">
+                  <Radio value={value} />
+                  {label}
+                </Label>
+              ))}
+            </RadioGroup>
+          </Fieldset>
+          <Fieldset className="flex flex-col gap-2">
+            <FieldsetLegend>Language servers</FieldsetLegend>
+            <p className="m-0 text-xs text-muted-foreground">
+              <code>diffle lsp</code> lists them; <code>diffle config set-lsp</code> overrides one.
+            </p>
+            {overrides.length > 0 && (
+              <p className="m-0 text-xs text-muted-foreground">
+                Overrides:{' '}
+                {overrides.map(([language, command], i) => (
+                  <span key={language}>
+                    {i > 0 && ', '}
+                    {language} <code>{command || '(off)'}</code>
+                  </span>
+                ))}
+              </p>
+            )}
+          </Fieldset>
+        </DialogPanel>
+        <DialogFooter className="items-center sm:justify-end">
+          <span className="flex-1 text-xs text-muted-foreground" title="Installed diffle version">
             diffle v{__DIFFLE_VERSION__}
           </span>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" onClick={save} disabled={saving}>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={saving}>
             Save
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

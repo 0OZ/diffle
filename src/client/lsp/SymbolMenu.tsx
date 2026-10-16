@@ -1,9 +1,10 @@
-import { Button } from '@/client/ui/Button.js';
+import { Button } from '@/client/ui/button.js';
 import { Crosshair, Link2, Shapes } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
 import { remPx } from '@/client/scale.js';
 import { useStore } from '@/client/store.js';
 import { CodeLine, useHighlighted } from './highlight.js';
+import { Kbd } from '@/client/ui/kbd.js';
 
 /** Popover at a clicked symbol: go to definition, list references, or go to its type's definition. Any other click, scroll, or Esc closes it. */
 export function SymbolMenu() {
@@ -42,31 +43,37 @@ export function SymbolMenu() {
   const style = below ? { left, top: menu.y + 12 } : { left, top: menu.y - height };
   return (
     <div
-      className="fixed z-40 flex gap-[2px] rounded-lg border border-border bg-canvas p-0.75 shadow-[0_0.5rem_1.5rem_rgba(0,_0,_0,_0.18)]"
+      className="fixed z-40 flex gap-[2px] rounded-lg border border-border bg-background p-0.75 shadow-[0_0.5rem_1.5rem_rgba(0,_0,_0,_0.18)]"
       style={style}
       role="menu"
       data-symbol-menu
     >
       <Button
-        className="flex cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2 py-1 font-sans text-[0.75rem] leading-[normal] text-foreground hover:bg-hover"
+        variant="outline"
+        className="flex h-auto cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2 py-1 font-sans text-[0.75rem] leading-[normal] text-foreground hover:bg-accent sm:h-auto"
         onClick={() => void goToDefinition(menu.target)}
         title="Go to definition (gd)"
+        size="sm"
       >
-        <Crosshair size="0.8125rem" /> Definition <kbd className="ml-[2px]">gd</kbd>
+        <Crosshair size="0.8125rem" /> Definition <Kbd className="ml-[2px]">gd</Kbd>
       </Button>
       <Button
-        className="flex cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2 py-1 font-sans text-[0.75rem] leading-[normal] text-foreground hover:bg-hover"
+        variant="outline"
+        className="flex h-auto cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2 py-1 font-sans text-[0.75rem] leading-[normal] text-foreground hover:bg-accent sm:h-auto"
         onClick={() => void findReferences(menu.target)}
         title="Find references (gA)"
+        size="sm"
       >
-        <Link2 size="0.8125rem" /> References <kbd className="ml-[2px]">gA</kbd>
+        <Link2 size="0.8125rem" /> References <Kbd className="ml-[2px]">gA</Kbd>
       </Button>
       <Button
-        className="flex cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2 py-1 font-sans text-[0.75rem] leading-[normal] text-foreground hover:bg-hover"
+        variant="outline"
+        className="flex h-auto cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2 py-1 font-sans text-[0.75rem] leading-[normal] text-foreground hover:bg-accent sm:h-auto"
         onClick={() => void goToTypeDefinition(menu.target)}
         title="Go to type definition (gy)"
+        size="sm"
       >
-        <Shapes size="0.8125rem" /> Type <kbd className="ml-[2px]">gy</kbd>
+        <Shapes size="0.8125rem" /> Type <Kbd className="ml-[2px]">gy</Kbd>
       </Button>
       <span
         className="ml-1 max-w-55 self-center truncate border-l border-l-border px-2 py-0.75 font-mono text-[0.75rem] leading-[normal] text-foreground"

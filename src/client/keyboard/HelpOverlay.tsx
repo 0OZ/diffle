@@ -1,7 +1,8 @@
 import { BookOpen } from 'lucide-react';
-import { Dialog, DialogContent } from '@/client/ui/dialog.js';
-import { Button } from '@/client/ui/Button.js';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/client/ui/dialog.js';
+import { Button } from '@/client/ui/button.js';
 import { useStore } from '@/client/store.js';
+import { Kbd } from '@/client/ui/kbd.js';
 
 type Row = [keys: string, action: string];
 export type HelpSection = { title: string; rows: Row[] };
@@ -116,10 +117,6 @@ function GithubMark() {
   );
 }
 
-/** Icon-only link in the dialog header, the height of the Close button. */
-const LINK =
-  'inline-flex size-6 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-foreground';
-
 export function HelpOverlay() {
   const open = useStore((s) => s.helpOpen);
   const setOpen = useStore((s) => s.setHelpOpen);
@@ -129,47 +126,50 @@ export function HelpOverlay() {
       <DialogContent
         initialFocus={false}
         aria-label="Keyboard shortcuts"
-        className="flex max-h-[calc(100vh_-_2rem)] w-max max-w-[96vw] flex-col overflow-hidden p-0"
+        showCloseButton={false}
+        className="max-h-[calc(100vh_-_2rem)] w-max max-w-[96vw] overflow-hidden"
       >
-        <div className="flex items-center justify-between border-b border-b-border px-4.5 pt-3 pb-2.5">
-          <h3 className="m-0 text-[0.9375rem]">Keyboard shortcuts</h3>
-          <div className="flex items-center">
-            <a
-              className={LINK}
-              href="https://diffle.app"
-              target="_blank"
-              rel="noreferrer"
+        <DialogHeader className="flex-row items-center justify-between gap-2 border-b px-4.5 pt-3 pb-2.5 max-sm:pb-2.5">
+          <DialogTitle className="text-[0.9375rem]">Keyboard shortcuts</DialogTitle>
+          <div className="flex items-center gap-0.5">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="text-muted-foreground"
+              render={<a href="https://diffle.app" target="_blank" rel="noreferrer" />}
               aria-label="Docs"
               title="Docs"
             >
-              <BookOpen size="1rem" aria-hidden="true" />
-            </a>
-            <a
-              className={LINK}
-              href="https://github.com/moritzwilksch/diffle"
-              target="_blank"
-              rel="noreferrer"
+              <BookOpen aria-hidden="true" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="text-muted-foreground"
+              render={<a href="https://github.com/moritzwilksch/diffle" target="_blank" rel="noreferrer" />}
               aria-label="GitHub repository"
               title="GitHub repository"
             >
               <GithubMark />
-            </a>
-            <Button className="ml-2" onClick={() => setOpen(false)}>
+            </Button>
+            <Button variant="outline" className="ml-2" onClick={() => setOpen(false)} size="sm">
               Close
             </Button>
           </div>
-        </div>
+        </DialogHeader>
         <div className="grid grid-cols-[auto_auto] items-start gap-x-10 overflow-auto px-4.5 pt-2.5 pb-3.5 text-[0.75rem] whitespace-nowrap">
           {COLUMNS.map((sections, col) => (
             <div key={col} className="grid grid-cols-[max-content_1fr] content-start gap-x-3">
               {sections.map((section) => (
                 <section className="col-span-full mb-2.5 grid grid-cols-subgrid last:mb-0" key={section.title}>
-                  <h4 className="col-span-full m-0 mb-0.5 text-[0.75rem] font-semibold text-muted">{section.title}</h4>
+                  <h4 className="col-span-full m-0 mb-0.5 text-[0.75rem] font-semibold text-muted-foreground">
+                    {section.title}
+                  </h4>
                   {section.rows.map(([k, a]) => (
                     <div key={k} className="col-span-full grid grid-cols-subgrid items-baseline leading-[1.7]">
                       <span className="inline-flex gap-1.5">
                         {k.split(/\s{2,}/).map((part, i) => (
-                          <kbd key={i}>{part}</kbd>
+                          <Kbd key={i}>{part}</Kbd>
                         ))}
                       </span>
                       <span>{a}</span>

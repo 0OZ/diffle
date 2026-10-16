@@ -1,7 +1,8 @@
-import { Dialog, DialogContent } from '@/client/ui/dialog.js';
-import { CopyIcon } from '@/client/ui/CopyIcon.js';
+import { CopyFallbackDialog } from './CopyFallbackDialog.js';
+import { CopyIcon } from '@/client/components/CopyIcon.js';
 import { twMerge } from 'tailwind-merge';
-import { Button } from '@/client/ui/Button.js';
+
+import { ActionButton } from '@/client/components/ActionButton.js';
 import { AlertTriangle, Check, ClipboardCopy, GitPullRequestArrow, MessageSquare, Trash2 } from 'lucide-react';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { CommentThread, Side } from '@/shared/protocol.js';
@@ -11,10 +12,12 @@ import { anchorLabel, commentsOff, exportLabel, type ExportOutcome, visibleThrea
 import { useStore } from '@/client/store.js';
 import { FilePath } from '@/client/FilePath.js';
 import { Markdown } from '@/client/Markdown.js';
-import { ButtonLabel } from '@/client/ui/ButtonLabel.js';
+import { ButtonLabel } from '@/client/components/ButtonLabel.js';
 import { useConfirm } from '@/client/useConfirm.js';
 import { CommitNavigator } from './CommitNavigator.js';
 import { IterationList } from './IterationList.js';
+import { Checkbox } from '@/client/ui/checkbox.js';
+import { Label } from '@/client/ui/label.js';
 
 export function CommentPanel() {
   const threads = useStore((s) => s.threads);
@@ -77,7 +80,7 @@ export function CommentPanel() {
   };
 
   return (
-    <aside className="flex min-h-0 flex-col bg-surface">
+    <aside className="flex min-h-0 flex-col bg-muted">
       {snapshot && (
         // Keyed by the range, so focusing one of its commits keeps the list as it was.
         <CommitNavigator key={(snapshot.mode.within ?? snapshot.mode).commentKey} snapshot={snapshot} />
@@ -87,7 +90,9 @@ export function CommentPanel() {
         <span className="mr-auto inline-flex min-w-0 items-center gap-1.5 truncate font-semibold">
           <MessageSquare size="0.9375rem" /> Threads
           {open.length > 0 && (
-            <span className="rounded-[0.625rem] bg-hover px-1.75 py-0 font-medium text-muted">{open.length}</span>
+            <span className="rounded-[0.625rem] bg-accent px-1.75 py-0 font-medium text-muted-foreground">
+              {open.length}
+            </span>
           )}
         </span>
         <CopyButton
@@ -100,9 +105,9 @@ export function CommentPanel() {
           pulse={copiedAll}
         />
         {canExport && (
-          <Button
+          <ActionButton
             variant="ghost"
-            icon={!post.armed && !posted}
+            size={!post.armed && !posted ? 'icon-sm' : 'sm'}
             feedback={post.armed ? 'confirm' : posted ? 'posted' : undefined}
             disabled={posting || (open.length === 0 && !posted)}
             title={
@@ -119,12 +124,12 @@ export function CommentPanel() {
           >
             {posted ? <Check size="0.875rem" /> : <GitPullRequestArrow size="0.875rem" />}
             <ButtonLabel text={post.armed ? 'Add all?' : posted && exportLabel(posted)} />
-          </Button>
+          </ActionButton>
         )}
-        <Button
+        <ActionButton
           variant="ghost"
           danger
-          icon={!clear.armed}
+          size={!clear.armed ? 'icon-sm' : 'sm'}
           feedback={clear.armed ? 'confirm' : undefined}
           disabled={threads.length === 0}
           title={clear.armed ? 'Click again to delete all threads' : 'Delete all threads for this mode'}
@@ -132,7 +137,7 @@ export function CommentPanel() {
         >
           <Trash2 size="0.875rem" />
           <ButtonLabel text={clear.armed && 'Delete all?'} />
-        </Button>
+        </ActionButton>
       </div>
       {staleCount > 0 && (
         <div
@@ -141,30 +146,31 @@ export function CommentPanel() {
         >
           <AlertTriangle size="0.75rem" />
           {staleCount} stale
-          <Button
+          <ActionButton
             variant="ghost"
             danger
             feedback={stale.armed ? 'confirm' : undefined}
             className="ml-auto gap-1 px-1.5 py-px text-[0.75rem] leading-[1.2]"
             onClick={stale.fire}
+            size="sm"
           >
             <Trash2 size="0.75rem" />
             <ButtonLabel text={stale.armed ? 'Delete stale?' : 'Delete'} />
-          </Button>
+          </ActionButton>
         </div>
       )}
       {resolvedCount > 0 && (
-        <label
-          className="flex cursor-pointer items-center gap-1.5 border-b border-b-border px-2.5 py-1 text-[0.75rem] text-muted"
+        <Label
+          className="cursor-pointer gap-1.5 border-b border-b-border px-2.5 py-1 text-[0.75rem] font-normal text-muted-foreground"
           title="Resolved threads are kept but left out of the prompt"
         >
-          <input type="checkbox" checked={showResolved} onChange={(e) => setShowResolved(e.target.checked)} />
+          <Checkbox checked={showResolved} onCheckedChange={setShowResolved} />
           Show {resolvedCount} resolved
-        </label>
+        </Label>
       )}
       <div className="flex flex-1 flex-col gap-3.5 overflow-auto p-2.5">
         {groups.length === 0 && (
-          <div className="px-3 py-6 text-center text-muted [&>p]:mt-0 [&>p]:mr-0 [&>p]:mb-1.5 [&>p]:ml-0">
+          <div className="px-3 py-6 text-center text-muted-foreground [&>p]:mt-0 [&>p]:mr-0 [&>p]:mb-1.5 [&>p]:ml-0">
             <p>{threads.length ? 'Every thread is resolved.' : 'No comments yet.'}</p>
             <p>
               {off ??
@@ -177,7 +183,7 @@ export function CommentPanel() {
             className="border-0 [&+section]:border-t [&+section]:border-solid [&+section]:border-border [&+section]:pt-3"
             key={path}
           >
-            <h4 className="m-0 mb-1.5 font-mono text-[0.75rem] leading-[1.4] text-muted">
+            <h4 className="m-0 mb-1.5 font-mono text-[0.75rem] leading-[1.4] text-muted-foreground">
               <FilePath path={path} />
             </h4>
             {list.map((t) => (
@@ -192,26 +198,7 @@ export function CommentPanel() {
           </section>
         ))}
       </div>
-      {manual && (
-        <Dialog open onOpenChange={() => setManual(null)}>
-          <DialogContent aria-label="Copy manually">
-            <h3 className="m-0 mb-2">Copy manually</h3>
-            <p className="m-0 mb-2 text-muted">
-              The browser blocked clipboard access. Select the text below and press Ctrl/⌘+c.
-            </p>
-            <textarea
-              className="min-h-40 w-full rounded-md border border-border bg-surface p-2 font-mono text-[0.75rem]"
-              readOnly
-              value={manual}
-              autoFocus
-              onFocus={(e) => e.currentTarget.select()}
-            />
-            <div className="mt-2.5 flex justify-end gap-1.5">
-              <Button onClick={() => setManual(null)}>Close</Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-      )}
+      {manual && <CopyFallbackDialog text={manual} onClose={() => setManual(null)} />}
     </aside>
   );
 }
@@ -246,7 +233,7 @@ const ThreadRow = memo(function ThreadRow({
       role="button"
       tabIndex={0}
       className={twMerge(
-        `group/thread mb-2 block w-full cursor-pointer overflow-hidden rounded-md border border-border bg-card p-0 text-left font-sans text-[0.8125rem] leading-[1.4] text-foreground shadow-card [transition:border-color_120ms_ease] hover:border-accent focus-visible:outline-2 focus-visible:outline-offset-[1px] focus-visible:outline-accent focus-visible:outline-solid ${t.stale ? 'border-dashed' : ''} ${t.resolved ? 'opacity-65' : ''}`,
+        `group/thread mb-2 block w-full cursor-pointer overflow-hidden rounded-md border border-border bg-card p-0 text-left font-sans text-[0.8125rem] leading-[1.4] text-foreground shadow-card [transition:border-color_120ms_ease] hover:border-primary focus-visible:outline-2 focus-visible:outline-offset-[1px] focus-visible:outline-primary focus-visible:outline-solid ${t.stale ? 'border-dashed' : ''} ${t.resolved ? 'opacity-65' : ''}`,
       )}
       onClick={open}
       onKeyDown={(e) => {
@@ -257,11 +244,11 @@ const ThreadRow = memo(function ThreadRow({
         }
       }}
     >
-      <div className="flex items-center gap-2 border-b border-b-border bg-hover py-1 pr-1.5 pl-2.5 text-[0.75rem] text-muted [&>svg]:flex-none [&>svg]:text-accent">
+      <div className="flex items-center gap-2 border-b border-b-border bg-accent py-1 pr-1.5 pl-2.5 text-[0.75rem] text-muted-foreground [&>svg]:flex-none [&>svg]:text-primary">
         <MessageSquare size="0.8125rem" />
         <span className="font-mono font-semibold text-foreground">{anchorLabel(t.anchor)}</span>
         {t.messages.length > 1 && (
-          <span className="text-muted">
+          <span className="text-muted-foreground">
             {t.messages.length - 1} repl{t.messages.length === 2 ? 'y' : 'ies'}
           </span>
         )}
@@ -275,13 +262,13 @@ const ThreadRow = memo(function ThreadRow({
             <Check size="0.6875rem" /> resolved
           </span>
         )}
-        <Button
+        <ActionButton
           type="button"
           variant="ghost"
           danger
-          icon={!del.armed}
+          size={!del.armed ? 'icon-xs' : 'xs'}
           feedback={del.armed ? 'confirm' : undefined}
-          className="ml-auto px-0.75 py-[1px] opacity-0 group-focus-within/thread:opacity-100 group-hover/thread:opacity-100 data-[feedback=confirm]:opacity-100"
+          className="ml-auto opacity-0 group-focus-within/thread:opacity-100 group-hover/thread:opacity-100 data-[feedback=confirm]:opacity-100"
           title={del.armed ? 'Click again to delete this thread' : 'Delete this thread'}
           aria-label={del.armed ? 'Delete this thread? Click again to confirm' : 'Delete this thread'}
           onClick={(e) => {
@@ -291,11 +278,11 @@ const ThreadRow = memo(function ThreadRow({
         >
           <Trash2 size="0.75rem" />
           <ButtonLabel text={del.armed && 'Delete?'} />
-        </Button>
+        </ActionButton>
       </div>
       <div className="px-2.5 pt-1.5 pb-2 [&>.markdown]:font-sans [&>.markdown]:text-[0.8125rem] [&>.markdown]:leading-[1.4] [&>.markdown]:[word-break:break-word]">
         {t.anchor.kind === 'line' && (
-          <div className="m-0 mb-1.5 overflow-hidden font-mono text-[0.75rem] leading-[1.4] text-ellipsis whitespace-nowrap text-muted">
+          <div className="m-0 mb-1.5 overflow-hidden font-mono text-[0.75rem] leading-[1.4] text-ellipsis whitespace-nowrap text-muted-foreground">
             {firstLine(t.anchor.quoted)}
           </div>
         )}
@@ -345,8 +332,8 @@ function CopyButton({
     acknowledge();
   }, [pulse]);
   return (
-    <Button
-      variant={primary ? 'primary' : 'default'}
+    <ActionButton
+      variant={primary ? 'default' : 'outline'}
       feedback={done ? 'copied' : undefined}
       className="relative"
       disabled={disabled}
@@ -354,10 +341,11 @@ function CopyButton({
       onClick={async () => {
         if (await onCopy()) acknowledge();
       }}
+      size="sm"
     >
       <CopyIcon done={done}>{icon}</CopyIcon>
       <ButtonLabel text={done ? 'Copied' : label} />
-    </Button>
+    </ActionButton>
   );
 }
 

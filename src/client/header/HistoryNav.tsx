@@ -1,7 +1,7 @@
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { canJumpBack, canJumpForward } from '@/client/model.js';
 import { useStore } from '@/client/store.js';
-import { Button } from '@/client/ui/Button.js';
+import { Button } from '@/client/ui/button.js';
 
 /**
  * Back and forward through the jump list, the mouse's share of Ctrl+o / Ctrl+i. Always in place
@@ -15,12 +15,19 @@ export function HistoryNav() {
   const jumpForward = useStore((s) => s.jumpForward);
   return (
     <span className="inline-flex items-center gap-0.5">
-      <Button variant="ghost" icon disabled={!back} onClick={jumpBack} title="Back (Ctrl+o)" aria-label="Back">
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        disabled={!back}
+        onClick={jumpBack}
+        title="Back (Ctrl+o)"
+        aria-label="Back"
+      >
         <ArrowLeft size="1rem" />
       </Button>
       <Button
         variant="ghost"
-        icon
+        size="icon-sm"
         disabled={!forward}
         onClick={jumpForward}
         title="Forward (Ctrl+i)"

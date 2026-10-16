@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useId, useRef, useState, type Ref } from 'react';
 import type { RefsResponse } from '@/shared/protocol.js';
+import { Input } from '@/client/ui/input.js';
 
 /** Editable revision with suggestions; arbitrary Git revisions remain valid input. */
 export function RefInput({
@@ -56,8 +57,9 @@ export function RefInput({
 
   return (
     <div className="group/ref relative min-w-0 flex-1">
-      <input
-        className="w-full min-w-0 rounded-md border border-transparent bg-surface px-1.5 py-1 text-foreground [font:inherit] focus:bg-hover focus:outline-none"
+      <Input
+        size="sm"
+        className="text-[length:inherit]"
         ref={inputRef}
         role="combobox"
         aria-label={label}
@@ -110,7 +112,7 @@ export function RefInput({
       />
       {open && (
         <div
-          className="absolute top-[calc(100%_+_0.375rem)] left-0 z-1 max-h-120 w-68 max-w-[calc(100vw_-_2rem)] overflow-auto rounded-md border border-border bg-canvas p-1 shadow-[0_0.375rem_1rem_rgba(0,_0,_0,_0.18)] group-last/ref:right-0 group-last/ref:left-auto"
+          className="absolute top-[calc(100%_+_0.375rem)] left-0 z-1 max-h-120 w-68 max-w-[calc(100vw_-_2rem)] overflow-auto rounded-md border border-border bg-background p-1 shadow-[0_0.375rem_1rem_rgba(0,_0,_0,_0.18)] group-last/ref:right-0 group-last/ref:left-auto"
           id={id}
           role="listbox"
           tabIndex={-1}
@@ -126,17 +128,21 @@ export function RefInput({
                 id={`${id}-${i}`}
                 role="option"
                 aria-selected={i === active}
-                className="flex cursor-pointer flex-col gap-0.5 rounded-sm px-2 py-1.5 hover:bg-hover aria-selected:bg-hover"
+                className="flex cursor-pointer flex-col gap-0.5 rounded-sm px-2 py-1.5 hover:bg-accent aria-selected:bg-accent"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => choose(option.value)}
               >
                 <span className="truncate">{option.value}</span>
-                <span className="truncate font-sans text-[0.6875rem] leading-[1.4] text-muted">{option.detail}</span>
+                <span className="truncate font-sans text-[0.6875rem] leading-[1.4] text-muted-foreground">
+                  {option.detail}
+                </span>
               </div>
             </Fragment>
           ))}
           {!options.length && (
-            <div className="p-2 font-sans text-[0.6875rem] leading-[1.4] text-muted">Use this revision as typed.</div>
+            <div className="p-2 font-sans text-[0.6875rem] leading-[1.4] text-muted-foreground">
+              Use this revision as typed.
+            </div>
           )}
         </div>
       )}

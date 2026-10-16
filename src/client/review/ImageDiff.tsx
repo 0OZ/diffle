@@ -3,8 +3,9 @@ import { imageKey, type Side } from '@/shared/protocol.js';
 import { api } from '@/client/api.js';
 import type { ImageSides } from '@/client/model.js';
 import { useStore, type ImageCompare, IMAGE_COMPARES } from '@/client/store.js';
-import { SegmentedControl, ToggleButton } from '@/client/ui/ToggleButton.js';
+import { Segment, SegmentedControl } from '@/client/components/SegmentedControl.js';
 import { useStandIn } from './PlaceholderBanner.js';
+import { Slider } from '@/client/ui/slider.js';
 
 interface Size {
   width: number;
@@ -84,7 +85,7 @@ export function ImageDiff({ path, sides }: { path: string; sides: ImageSides }) 
     return key ? api.imageUrl(path, side, key) : null;
   };
   return (
-    <div ref={ref} className="flex flex-col gap-2 bg-hover px-4 py-3 font-sans text-[0.8125rem]" data-image-diff>
+    <div ref={ref} className="flex flex-col gap-2 bg-accent px-4 py-3 font-sans text-[0.8125rem]" data-image-diff>
       {sides === 'both' ? (
         <Compare path={path} url={{ old: urlOf('old'), new: urlOf('new') }} />
       ) : (
@@ -108,11 +109,11 @@ function Compare({ path, url }: { path: string; url: Record<Side, string | null>
   const mode = pair ? compare : 'side-by-side';
   return (
     <>
-      <SegmentedControl className="self-start" role="group" aria-label="Image comparison">
+      <SegmentedControl className="self-start" aria-label="Image comparison" value={mode} onValueChange={setCompare}>
         {IMAGE_COMPARES.map((c) => (
-          <ToggleButton key={c} selected={mode === c} disabled={!pair} onClick={() => setCompare(c)}>
+          <Segment key={c} value={c} disabled={!pair}>
             {LABEL[c]}
-          </ToggleButton>
+          </Segment>
         ))}
       </SegmentedControl>
       {pair && mode !== 'side-by-side' ? (
@@ -131,9 +132,9 @@ function Figure({ path, side, image }: { path: string; side: Side; image: Decode
   return (
     <figure className="m-0 flex min-w-0 flex-col gap-1">
       {image === undefined ? (
-        <span className="text-muted">Loading image…</span>
+        <span className="text-muted-foreground">Loading image…</span>
       ) : image === null ? (
-        <span className="text-muted">Binary file: not a displayable image</span>
+        <span className="text-muted-foreground">Binary file: not a displayable image</span>
       ) : (
         <img
           src={image.url}
@@ -143,7 +144,7 @@ function Figure({ path, side, image }: { path: string; side: Side; image: Decode
           style={frame(image.size)}
         />
       )}
-      <figcaption className="font-mono text-[0.75rem] text-muted">{caption(side, image)}</figcaption>
+      <figcaption className="font-mono text-[0.75rem] text-muted-foreground">{caption(side, image)}</figcaption>
     </figure>
   );
 }
@@ -215,20 +216,19 @@ function Stack({
           />
         </div>
         {mode === 'swipe' && (
-          <div className="pointer-events-none absolute inset-y-0 w-0.5 bg-accent" style={{ left: `${amount}%` }} />
+          <div className="pointer-events-none absolute inset-y-0 w-0.5 bg-primary" style={{ left: `${amount}%` }} />
         )}
       </div>
-      <div className="flex items-center gap-3 font-mono text-[0.75rem] text-muted">
+      <div className="flex items-center gap-3 font-mono text-[0.75rem] text-muted-foreground">
         <span>{caption('old', pair.old)}</span>
         {mode === 'onion' && (
-          <input
-            type="range"
+          <Slider
             min={0}
             max={100}
             value={amount}
-            onChange={(e) => setAmount(Number(e.target.value))}
-            aria-label="New side opacity"
-            className="w-40 accent-accent"
+            onValueChange={(value) => setAmount(Array.isArray(value) ? (value[0] ?? 0) : value)}
+            getAriaLabel={() => 'New side opacity'}
+            className="w-40"
           />
         )}
         <span>{caption('new', pair.new)}</span>

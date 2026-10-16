@@ -156,7 +156,7 @@ export async function waitForHighlight(page: Page, path: string): Promise<void> 
 
 /** Whether the file is marked viewed. */
 export async function viewed(page: Page, path: string): Promise<boolean> {
-  return (await fileItem(page, path)).locator('input[type="checkbox"]').isChecked();
+  return (await fileItem(page, path)).getByRole('checkbox').isChecked();
 }
 
 /**
@@ -233,11 +233,11 @@ export async function collapsed(page: Page, path: string): Promise<boolean> {
 
 /**
  * Mark the file viewed or unviewed, the same toggle the header label drives. Viewing also collapses
- * the file and moves the cursor to the next unviewed file. Blurs the checkbox afterwards: it is an
- * `INPUT`, and the keymap ignores keys while one has focus, so a later `J`/`v` would silently no-op.
+ * the file and moves the cursor to the next unviewed file. Blurs the checkbox afterwards, so a later
+ * Space or Enter does not toggle it again.
  */
 export async function setViewed(page: Page, path: string, on: boolean): Promise<void> {
-  const box = (await fileItem(page, path)).locator('input[type="checkbox"]');
+  const box = (await fileItem(page, path)).getByRole('checkbox');
   if ((await box.isChecked()) !== on) {
     await box.click();
     await box.blur();

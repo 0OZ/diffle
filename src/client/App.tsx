@@ -8,7 +8,7 @@ import { documentTitle } from './model.js';
 import { ReviewPane } from './review/ReviewPane.js';
 import { useStore } from './store.js';
 import { FileTreePane } from './tree/FileTreePane.js';
-import { TooltipHost } from './ui/TitleTooltips.js';
+import { TooltipHost } from '@/client/components/TitleTooltips.js';
 
 export function App() {
   const boot = useStore((s) => s.boot);
@@ -103,7 +103,7 @@ export function App() {
         <>
           <FileTreePane />
           <div
-            className="cursor-col-resize bg-border opacity-60 [transition:opacity_120ms_ease,_background_120ms_ease] hover:bg-accent hover:opacity-100 data-resizing:bg-accent data-resizing:opacity-100"
+            className="cursor-col-resize bg-border opacity-60 [transition:opacity_120ms_ease,_background_120ms_ease] hover:bg-primary hover:opacity-100 data-resizing:bg-primary data-resizing:opacity-100"
             onPointerDown={startResize('tree')}
             title="Drag to resize"
           />
@@ -113,7 +113,7 @@ export function App() {
       {layout.panelVisible && (
         <>
           <div
-            className="cursor-col-resize bg-border opacity-60 [transition:opacity_120ms_ease,_background_120ms_ease] hover:bg-accent hover:opacity-100 data-resizing:bg-accent data-resizing:opacity-100"
+            className="cursor-col-resize bg-border opacity-60 [transition:opacity_120ms_ease,_background_120ms_ease] hover:bg-primary hover:opacity-100 data-resizing:bg-primary data-resizing:opacity-100"
             onPointerDown={startResize('panel')}
             title="Drag to resize"
           />
@@ -123,7 +123,7 @@ export function App() {
       <HelpOverlay />
       <TooltipHost />
       {toast && (
-        <div className="fixed bottom-6 left-[50%] z-60 max-w-[min(48rem,_90vw)] [transform:translateX(-50%)] [animation:flash-in_160ms_ease] rounded-lg bg-foreground px-5 py-3 text-[1rem] leading-[1.4] wrap-anywhere text-canvas shadow-[0_0.5rem_1.5rem_rgba(0,_0,_0,_0.35)]">
+        <div className="fixed bottom-6 left-[50%] z-60 max-w-[min(48rem,_90vw)] [transform:translateX(-50%)] [animation:flash-in_160ms_ease] rounded-lg bg-foreground px-5 py-3 text-[1rem] leading-[1.4] wrap-anywhere text-background shadow-[0_0.5rem_1.5rem_rgba(0,_0,_0,_0.35)]">
           {toast}
         </div>
       )}

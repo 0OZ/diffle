@@ -1,8 +1,8 @@
-import { SegmentedControl, ToggleButton } from '@/client/ui/ToggleButton.js';
 import { twMerge } from 'tailwind-merge';
-import { Button } from '@/client/ui/Button.js';
+import { Button } from '@/client/ui/button.js';
+import { Input } from '@/client/ui/input.js';
+import { Label } from '@/client/ui/label.js';
 import {
-  ArrowLeftRight,
   ChevronDown,
   ChevronRight,
   GitCommitHorizontal,
@@ -19,8 +19,10 @@ import { focusReview } from '@/client/keyboard/useKeymap.js';
 import { lastCommitsRequest } from '@/client/model.js';
 import { useStore } from '@/client/store.js';
 import { RefInput } from './RefInput.js';
+import { RefsPane } from './RefsPane.js';
 import { CommitOffsetInput, parseOffset } from './CommitOffsetInput.js';
 import { CommitPreview } from './CommitPreview.js';
+import { Kbd } from '@/client/ui/kbd.js';
 
 /** Comparison modes with configuration in an adjacent pane. */
 export function ModePicker() {
@@ -145,31 +147,34 @@ export function ModePicker() {
   return (
     <div className="relative min-w-28" ref={wrap}>
       <Button
+        variant="outline"
         onClick={() => setOpen(!open)}
         title="Change what is compared (m)"
         aria-expanded={open}
         aria-controls="mode-picker"
         className="max-w-full font-mono"
+        size="sm"
       >
         <span className="truncate">{snapshot ? comparisonLabel(snapshot.mode) : '…'}</span>{' '}
         <ChevronDown size="0.875rem" />
       </Button>
       {open && (
         <div
-          className="absolute top-[calc(100%_+_0.375rem)] left-0 z-20 flex w-max max-w-[calc(100vw_-_2rem)] min-w-60 rounded-[0.625rem] border border-border bg-canvas p-1.5 shadow-[0_0.625rem_1.875rem_rgba(0,_0,_0,_0.18)] max-[640px]:fixed max-[640px]:top-12 max-[640px]:left-2 max-[640px]:max-w-[calc(100vw_-_1rem)]"
+          className="absolute top-[calc(100%_+_0.375rem)] left-0 z-20 flex w-max max-w-[calc(100vw_-_2rem)] min-w-60 rounded-[0.625rem] border border-border bg-background p-1.5 shadow-[0_0.625rem_1.875rem_rgba(0,_0,_0,_0.18)] max-[640px]:fixed max-[640px]:top-12 max-[640px]:left-2 max-[640px]:max-w-[calc(100vw_-_1rem)]"
           id="mode-picker"
           role="dialog"
           aria-label="Compare"
         >
           <div className="w-60 shrink-0 max-[640px]:w-44">
-            <div className="px-2.5 pt-1 pb-1.5 text-[0.6875rem] font-semibold text-muted">Compare</div>
+            <div className="px-2.5 pt-1 pb-1.5 text-[0.6875rem] font-semibold text-muted-foreground">Compare</div>
             {/* The accent marks an expanded configuration pane; Working has none and acts on click.
                 Pointer, focus and j / k share one highlight, which Enter picks. */}
             {entries.map((entry, i) => (
               <Button
+                variant="ghost"
                 key={entry.label}
                 className={twMerge(
-                  `grid min-h-8.5 w-full grid-cols-[1.125rem_1fr_auto_1.5rem] items-center gap-2.5 rounded-[0.4375rem] border-0 bg-transparent px-2.5 py-1.75 text-left font-sans text-[0.8125rem] leading-[1.3] text-foreground [&_kbd]:ml-1 [&_kbd]:justify-self-end [&_kbd]:text-muted [&>svg]:text-muted ${highlighted === i + 1 ? 'bg-hover hover:bg-hover' : 'hover:bg-transparent'} ${entry.pane && pane === entry.pane ? '[&>span:first-of-type]:font-semibold [&>svg]:text-accent' : ''}`,
+                  `grid h-auto min-h-8.5 w-full grid-cols-[1.125rem_1fr_auto_1.5rem] items-center gap-2.5 rounded-[0.4375rem] px-2.5 py-1.75 text-left font-sans text-[0.8125rem] leading-[1.3] sm:h-auto [&_kbd]:ml-1 [&_kbd]:justify-self-end [&>svg]:text-muted-foreground ${highlighted === i + 1 ? 'bg-accent' : 'hover:bg-transparent'} ${entry.pane && pane === entry.pane ? '[&>span:first-of-type]:font-semibold [&>svg]:text-primary' : ''}`,
                 )}
                 aria-expanded={entry.pane ? pane === entry.pane : undefined}
                 aria-controls={entry.pane ? 'mode-config' : undefined}
@@ -181,10 +186,11 @@ export function ModePicker() {
                   pointerPick.current = e.detail > 0;
                   pick(i + 1);
                 }}
+                size="sm"
               >
                 <entry.icon size="0.875rem" />
                 <span className="whitespace-nowrap">{entry.label}</span>
-                <kbd>{i + 1}</kbd>
+                <Kbd>{i + 1}</Kbd>
                 {entry.pane ? <ChevronRight size="0.875rem" /> : <span />}
               </Button>
             ))}
@@ -214,78 +220,22 @@ export function ModePicker() {
               }}
             >
               {pane === 'pr' && (
-                <div className="pt-1 pb-1.5 text-[0.6875rem] font-semibold text-muted">Pull request</div>
+                <div className="pt-1 pb-1.5 text-[0.6875rem] font-semibold text-muted-foreground">Pull request</div>
               )}
               {pane === 'refs' && (
-                <>
-                  <div className="flex items-center gap-1.5 pt-1.5 font-mono text-[0.8125rem] leading-[1.5]">
-                    <RefInput
-                      label="Base ref"
-                      value={a}
-                      onChange={setA}
-                      refs={refs}
-                      autoFocus={!pointerPick.current}
-                      onAccept={() => targetRef.current?.focus()}
-                    />
-                    <span>{dots}</span>
-                    <RefInput
-                      label="Target ref"
-                      value={b}
-                      onChange={setB}
-                      refs={refs}
-                      inputRef={targetRef}
-                      onAccept={() => comparisonToggle.current?.focus()}
-                    />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <SegmentedControl
-                      className="self-start focus-visible:outline-2 focus-visible:outline-offset-[2px] focus-visible:outline-accent focus-visible:outline-solid"
-                      ref={comparisonToggle}
-                      role="group"
-                      aria-label={`Comparison: ${dots === '..' ? 'Direct' : 'Merge base'}. Space to toggle.`}
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          if (!e.repeat) e.currentTarget.closest('form')?.requestSubmit();
-                          return;
-                        }
-                        if (e.key !== ' ') return;
-                        e.preventDefault();
-                        e.stopPropagation();
-                        if (!e.repeat) setDots((current) => (current === '..' ? '...' : '..'));
-                      }}
-                    >
-                      <ToggleButton
-                        type="button"
-                        selected={dots === '...'}
-                        tabIndex={-1}
-                        onClick={() => setDots('...')}
-                      >
-                        Merge base
-                      </ToggleButton>
-                      <ToggleButton type="button" selected={dots === '..'} tabIndex={-1} onClick={() => setDots('..')}>
-                        Direct
-                      </ToggleButton>
-                    </SegmentedControl>
-                    <Button
-                      id="swap-refs"
-                      className="border-0 bg-transparent p-0.5 text-muted hover:bg-hover hover:text-foreground"
-                      type="button"
-                      tabIndex={-1}
-                      aria-label="Swap refs"
-                      aria-keyshortcuts="x"
-                      title="Swap refs (x)"
-                      onClick={swapRefs}
-                    >
-                      <ArrowLeftRight size="0.75rem" />
-                    </Button>
-                  </div>
-                  <p className="m-0 p-0 text-[0.75rem] whitespace-normal text-muted">
-                    {dots === '..' ? 'Compare these two revisions.' : 'Compare changes since their common ancestor.'}
-                  </p>
-                </>
+                <RefsPane
+                  a={a}
+                  b={b}
+                  dots={dots}
+                  refs={refs}
+                  onA={setA}
+                  onB={setB}
+                  onDots={setDots}
+                  onSwap={swapRefs}
+                  autoFocus={!pointerPick.current}
+                  targetRef={targetRef}
+                  toggleRef={comparisonToggle}
+                />
               )}
               {pane === 'commits' && (
                 <div className="flex flex-col gap-2 pt-1.5">
@@ -317,7 +267,7 @@ export function ModePicker() {
                     />
                     <span>^!</span>
                   </div>
-                  <p className="m-0 p-0 text-[0.75rem] whitespace-normal text-muted">
+                  <p className="m-0 p-0 text-[0.75rem] whitespace-normal text-muted-foreground">
                     Show this commit against its first parent.
                   </p>
                 </>
@@ -326,7 +276,9 @@ export function ModePicker() {
                 <>
                   {(['old', 'new'] as const).map((side, i) => (
                     <div key={side} className={`flex flex-col gap-1 ${i === 0 ? 'pt-1.5' : ''}`}>
-                      <span className="text-[0.75rem] text-muted">{side === 'old' ? 'Old range' : 'New range'}</span>
+                      <span className="text-[0.75rem] text-muted-foreground">
+                        {side === 'old' ? 'Old range' : 'New range'}
+                      </span>
                       <div className="flex items-center gap-1.5 font-mono text-[0.8125rem] leading-[1.5]">
                         <RefInput
                           label={`${side === 'old' ? 'Old' : 'New'} base`}
@@ -356,17 +308,18 @@ export function ModePicker() {
                       </div>
                     </div>
                   ))}
-                  <p className="m-0 p-0 text-[0.75rem] whitespace-normal text-muted">
+                  <p className="m-0 p-0 text-[0.75rem] whitespace-normal text-muted-foreground">
                     How the old range’s commits became the new range’s, like git range-diff.
                   </p>
                 </>
               )}
               {pane === 'pr' && (
                 <>
-                  <label className="flex min-w-0 flex-col gap-1.5">
-                    <span className="text-[0.75rem] text-muted">PR number or URL</span>
-                    <input
-                      className="w-full min-w-0 rounded-md border border-border bg-surface px-2 py-1.5 font-mono text-[0.75rem] leading-[normal] text-foreground"
+                  <Label className="min-w-0 flex-col items-stretch gap-1.5 text-[0.75rem] font-normal text-muted-foreground">
+                    PR number or URL
+                    <Input
+                      size="sm"
+                      className="font-mono text-[0.75rem]"
                       ref={prInput}
                       autoFocus
                       autoComplete="off"
@@ -381,8 +334,8 @@ export function ModePicker() {
                       }}
                       placeholder="Current branch’s PR"
                     />
-                  </label>
-                  <p className="m-0 p-0 text-[0.75rem] whitespace-normal text-muted" id="pr-hint">
+                  </Label>
+                  <p className="m-0 p-0 text-[0.75rem] whitespace-normal text-muted-foreground" id="pr-hint">
                     Enter a PR number or URL, or leave blank for this branch.
                   </p>
                   {prError && (
@@ -394,7 +347,7 @@ export function ModePicker() {
               )}
               <Button
                 className="mt-auto self-end"
-                variant="primary"
+
                 type="submit"
                 aria-live={pane === 'pr' ? 'polite' : undefined}
                 aria-busy={pane === 'pr' && prPending}
@@ -409,6 +362,7 @@ export function ModePicker() {
                           ? !rangeArgs
                           : !validOffsets
                 }
+                size="sm"
               >
                 {pane === 'pr'
                   ? prPending

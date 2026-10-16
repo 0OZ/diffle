@@ -5,9 +5,10 @@ import { type Iteration, type Snapshot, shownIterations } from '@/shared/protoco
 import { iterationPick, relativeTime } from '@/client/model.js';
 import { useStore } from '@/client/store.js';
 import { useConfirm } from '@/client/useConfirm.js';
-import { CopyHash } from './CommitNavigator.js';
-import { Button } from '@/client/ui/Button.js';
-import { ButtonLabel } from '@/client/ui/ButtonLabel.js';
+import { CopyHash } from './CommitInfo.js';
+import { Button } from '@/client/ui/button.js';
+import { ActionButton } from '@/client/components/ActionButton.js';
+import { ButtonLabel } from '@/client/components/ButtonLabel.js';
 
 /**
  * The recorded iterations of the range, newest first; the newest is where the review stands. The
@@ -45,25 +46,29 @@ export function IterationList({ snapshot }: { snapshot: Snapshot }) {
       <div className="flex min-h-10 flex-none items-center gap-1.5 pr-1.5">
         <Button
           variant="ghost"
-          className="min-w-0 flex-1 gap-1.5 self-stretch rounded-none px-2.5 py-1.5 text-left font-semibold outline-none focus-visible:bg-hover"
+          className="h-auto min-w-0 flex-1 justify-start gap-1.5 self-stretch rounded-none border-0 px-2.5 py-1.5 text-left font-semibold outline-none focus-visible:bg-accent sm:h-auto"
           aria-expanded={open}
           title={open ? 'Collapse the iterations' : 'Expand the iterations'}
           onClick={() => setOpen(!open)}
+          size="sm"
         >
           <History size="0.9375rem" /> Iterations
-          <span className="rounded-[0.625rem] bg-hover px-1.75 py-0 font-medium text-muted">{iterations.length}</span>
+          <span className="rounded-[0.625rem] bg-accent px-1.75 py-0 font-medium text-muted-foreground">
+            {iterations.length}
+          </span>
         </Button>
-        <Button
+        <ActionButton
           variant="ghost"
           danger
           feedback={forget.armed ? 'confirm' : undefined}
           className="gap-1 px-1.5 py-px text-[0.75rem] leading-[1.2] font-normal"
           title={forget.armed ? 'Click again to forget them' : 'Forget the recorded iterations of this range'}
           onClick={forget.fire}
+          size="sm"
         >
           <Trash2 size="0.875rem" />
           <ButtonLabel text={forget.armed && 'Forget all?'} />
-        </Button>
+        </ActionButton>
       </div>
       {open && (
         <ol className="m-0 min-h-0 list-none overflow-auto p-0 pb-1.5">
@@ -123,31 +128,32 @@ function IterationRow({
       aria-current={from ? 'true' : undefined}
       className={twMerge(
         'group/iteration relative flex items-center pr-1.5',
-        (from || to) && 'bg-accent/12',
+        (from || to) && 'bg-primary/12',
         // The bracket: a bar down the compared span, with its ends on the two rows.
         (from || to || inside) && 'shadow-[inset_2px_0_0_var(--accent)]',
       )}
     >
       <Button
         variant="ghost"
-        className="min-w-0 flex-1 rounded-none py-1 pr-1 pl-2.5 text-left outline-none hover:bg-transparent focus-visible:bg-hover"
+        className="h-auto min-w-0 flex-1 justify-start rounded-none border-0 py-1 pr-1 pl-2.5 text-left outline-none hover:bg-transparent focus-visible:bg-accent sm:h-auto"
         title={title}
         onClick={(e) => onPick(e.shiftKey)}
+        size="sm"
       >
         <Row iteration={it} notes={notes} emphasis={from || to} />
       </Button>
       <CopyHash commit={{ sha: it.newSha, short: it.newSha.slice(0, 7) }} />
       {/* The latest keeps the slot but no button, so the hashes line up down the list. */}
-      <Button
+      <ActionButton
         variant="ghost"
         danger
-        icon={!del.armed}
+        size={!del.armed ? 'icon-xs' : 'xs'}
         feedback={del.armed ? 'confirm' : undefined}
         disabled={latest}
         tabIndex={latest ? -1 : undefined}
         aria-hidden={latest || undefined}
         className={twMerge(
-          'px-0.75 py-[1px] text-[0.75rem] leading-[1.2] font-normal opacity-0 group-focus-within/iteration:opacity-100 group-hover/iteration:opacity-100 data-[feedback=confirm]:opacity-100',
+          'text-[0.75rem] font-normal opacity-0 group-focus-within/iteration:opacity-100 group-hover/iteration:opacity-100 data-[feedback=confirm]:opacity-100',
           latest && 'invisible',
         )}
         title={del.armed ? `Click again to forget #${it.n}` : `Forget iteration #${it.n}`}
@@ -156,7 +162,7 @@ function IterationRow({
       >
         <Trash2 size="0.75rem" />
         <ButtonLabel text={del.armed && 'Forget?'} />
-      </Button>
+      </ActionButton>
     </li>
   );
 }
@@ -165,8 +171,8 @@ function Row({ iteration, notes, emphasis }: { iteration: Iteration; notes: stri
   return (
     <span className="flex w-full items-baseline gap-2 leading-[1.125rem]">
       <span className={twMerge('flex-none', emphasis ? 'font-semibold' : 'font-medium')}>#{iteration.n}</span>
-      <span className="min-w-0 flex-1 truncate text-muted">{relativeTime(iteration.recordedAt)}</span>
-      {notes.length > 0 && <span className="flex-none text-[0.75rem] text-muted">{notes.join(' · ')}</span>}
+      <span className="min-w-0 flex-1 truncate text-muted-foreground">{relativeTime(iteration.recordedAt)}</span>
+      {notes.length > 0 && <span className="flex-none text-[0.75rem] text-muted-foreground">{notes.join(' · ')}</span>}
     </span>
   );
 }

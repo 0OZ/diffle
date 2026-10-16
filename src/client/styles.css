@@ -7,27 +7,125 @@
 @import './styles/markdown.css' layer(components);
 @import './styles/viewers.css' layer(components);
 
+/* Dark is the user's choice (`data-theme`, see theme.ts) or else the system's; coss components use `dark:`. */
+@custom-variant dark {
+  :root[data-theme='dark'] & {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) & {
+      @slot;
+    }
+  }
+}
+
+/* The coss ui (shadcn) token names, resolved to the palette in theme.css so chrome and highlighted code agree. */
 @theme inline {
-  --color-canvas: var(--bg);
-  --color-surface: var(--bg-2);
-  --color-hover: var(--bg-3);
-  --color-raised: var(--bg-raised);
+  /* The app's body size: coss components use `text-sm` for their controls, which would run larger. */
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.4;
+  --color-background: var(--bg);
   --color-foreground: var(--fg);
-  --color-muted: var(--fg-2);
+  --color-card: var(--bg-card);
+  --color-card-foreground: var(--fg);
+  --color-popover: var(--bg-card);
+  --color-popover-foreground: var(--fg);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--accent-fg);
+  --color-secondary: var(--bg-3);
+  --color-secondary-foreground: var(--fg);
+  --color-muted: var(--bg-2);
+  --color-muted-foreground: var(--fg-2);
+  --color-accent: var(--bg-3);
+  --color-accent-foreground: var(--fg);
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: var(--danger);
   --color-border: var(--border);
-  --color-accent: var(--accent);
-  --color-accent-fg: var(--accent-fg);
-  --color-danger: var(--danger);
+  --color-input: var(--border);
+  --color-ring: var(--accent);
+  --color-info: var(--accent);
+  --color-info-foreground: var(--accent);
+  --color-success: var(--add);
+  --color-success-foreground: var(--add);
+  --color-warning: var(--warn);
+  --color-warning-foreground: var(--warn);
+  /* Review colours with no coss counterpart. */
   --color-warn: var(--warn);
   --color-add: var(--add);
   --color-del: var(--del);
   --color-kind-type: var(--kind-type);
   --color-kind-callable: var(--kind-callable);
   --color-kind-value: var(--kind-value);
-  --color-card: var(--bg-card);
   --font-mono: var(--mono);
   --font-sans: var(--sans);
+  --font-heading: var(--sans);
   --shadow-card: var(--review-card-shadow);
+  --animate-toast-success-odd: toast-success-odd 0.32s cubic-bezier(0.5, 1, 0.89, 1);
+  --animate-toast-success-even: toast-success-even 0.32s cubic-bezier(0.5, 1, 0.89, 1);
+  --animate-toast-error-odd: toast-error-odd 0.28s cubic-bezier(0.5, 1, 0.89, 1);
+  --animate-toast-error-even: toast-error-even 0.28s cubic-bezier(0.5, 1, 0.89, 1);
+  @keyframes toast-success-odd {
+    0% {
+      scale: 1;
+    }
+    30% {
+      scale: 1.025;
+    }
+    60% {
+      scale: 0.99;
+    }
+    100% {
+      scale: 1;
+    }
+  }
+  @keyframes toast-error-odd {
+    0% {
+      translate: 0 0;
+    }
+    25% {
+      translate: -3px 0;
+    }
+    50% {
+      translate: 3px 0;
+    }
+    75% {
+      translate: -3px 0;
+    }
+    100% {
+      translate: 0 0;
+    }
+  }
+  @keyframes toast-success-even {
+    0% {
+      scale: 1;
+    }
+    30% {
+      scale: 1.025;
+    }
+    60% {
+      scale: 0.99;
+    }
+    100% {
+      scale: 1;
+    }
+  }
+  @keyframes toast-error-even {
+    0% {
+      translate: 0 0;
+    }
+    25% {
+      translate: -3px 0;
+    }
+    50% {
+      translate: 3px 0;
+    }
+    75% {
+      translate: -3px 0;
+    }
+    100% {
+      translate: 0 0;
+    }
+  }
 }
 
 @keyframes spin {
@@ -45,4 +143,12 @@
     opacity: 1;
     transform: translate(-50%, 0);
   }
+}
+
+:root {
+  --destructive-foreground: var(--color-red-700);
+}
+
+.dark {
+  --destructive-foreground: var(--color-red-400);
 }

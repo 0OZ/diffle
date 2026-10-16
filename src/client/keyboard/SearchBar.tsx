@@ -1,8 +1,12 @@
-import { twMerge } from 'tailwind-merge';
-import { Button } from '@/client/ui/Button.js';
+import { Button } from '@/client/ui/button.js';
+import { Input } from '@/client/ui/input.js';
+import { Toggle } from '@/client/ui/toggle.js';
 import { FileDiff, FileSearch, Link2, Search, WholeWord, X } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { useStore } from '@/client/store.js';
+
+/** The option toggles are compact: a mono glyph that lights up in the accent while on. */
+const TOGGLE = 'font-mono text-[0.6875rem] text-muted-foreground data-pressed:bg-primary/12 data-pressed:text-primary';
 
 /** Content search (/ in the current file, g/ across changed files), the references of a symbol (gA), or a word's occurrences (* / #). Enter runs a search; n / N step through matches. */
 export function SearchBar({ path }: { path?: string }) {
@@ -31,9 +35,9 @@ function SearchForm() {
   const n = search.matches.length;
   if (search.kind !== 'text') {
     return (
-      <div className="flex items-center gap-2 border-b border-b-border bg-surface px-2.5 py-1.5">
+      <div className="flex items-center gap-2 border-b border-b-border bg-muted px-2.5 py-1.5">
         {search.kind === 'references' ? <Link2 size="0.875rem" /> : <WholeWord size="0.875rem" />}
-        <span className="flex-1 font-mono text-[0.75rem] leading-[normal] text-muted [&_code]:text-foreground">
+        <span className="flex-1 font-mono text-[0.75rem] leading-[normal] text-muted-foreground [&_code]:text-foreground">
           {search.kind === 'references'
             ? 'references to'
             : search.direction === 1
@@ -41,10 +45,10 @@ function SearchForm() {
               : 'occurrences (upwards) of'}{' '}
           <code>{search.query}</code>
         </span>
-        <span className="min-w-17.5 text-right font-mono text-[0.75rem] leading-[normal] text-muted">
+        <span className="min-w-17.5 text-right font-mono text-[0.75rem] leading-[normal] text-muted-foreground">
           {search.loading ? 'searching…' : n ? `${search.index + 1} / ${n}${search.truncated ? '+' : ''}` : 'none'}
         </span>
-        <Button type="button" variant="ghost" icon onClick={closeSearch} title="Close (Esc)">
+        <Button type="button" variant="ghost" size="icon-sm" onClick={closeSearch} title="Close (Esc)">
           <X size="0.875rem" />
         </Button>
       </div>
@@ -54,7 +58,7 @@ function SearchForm() {
   const ScopeIcon = fullFile ? FileSearch : FileDiff;
   return (
     <form
-      className="flex items-center gap-2 border-b border-b-border bg-surface px-2.5 py-1.5"
+      className="flex items-center gap-2 border-b border-b-border bg-muted px-2.5 py-1.5"
       onClick={(e) => e.stopPropagation()}
       onSubmit={(e) => {
         e.preventDefault();
@@ -65,9 +69,10 @@ function SearchForm() {
       }}
     >
       <Search size="0.875rem" />
-      <input
+      <Input
         data-content-search=""
-        className="min-w-0 flex-1 rounded-md border border-border bg-canvas px-2 py-1 font-mono text-[0.75rem]"
+        size="sm"
+        className="min-w-0 flex-1 font-mono text-[0.75rem]"
         ref={ref}
         value={search.input}
         onFocus={() => {
@@ -79,39 +84,30 @@ function SearchForm() {
         }
         spellCheck={false}
       />
-      <Button
-        type="button"
-        variant="ghost"
-        className={twMerge(
-          `rounded-sm border border-transparent px-1.5 py-[2px] font-mono text-[0.6875rem] leading-[normal] text-muted ${search.ignoreCase ? '' : 'border-accent bg-[color-mix(in_srgb,_var(--accent)_12%,_transparent)] text-accent'}`,
-        )}
-        aria-pressed={!search.ignoreCase}
-        onClick={() => setSearchOptions({ ignoreCase: !search.ignoreCase })}
+      <Toggle
+        size="sm"
+        className={TOGGLE}
+        pressed={!search.ignoreCase}
+        onPressedChange={(pressed) => setSearchOptions({ ignoreCase: !pressed })}
         title={search.ignoreCase ? 'Ignoring case; click to match case' : 'Matching case; click to ignore case'}
       >
         Aa
-      </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        className={twMerge(
-          `rounded-sm border border-transparent px-1.5 py-[2px] font-mono text-[0.6875rem] leading-[normal] text-muted ${search.regex ? 'border-accent bg-[color-mix(in_srgb,_var(--accent)_12%,_transparent)] text-accent' : ''}`,
-        )}
-        aria-pressed={search.regex}
-        onClick={() => setSearchOptions({ regex: !search.regex })}
+      </Toggle>
+      <Toggle
+        size="sm"
+        className={TOGGLE}
+        pressed={search.regex}
+        onPressedChange={(pressed) => setSearchOptions({ regex: pressed })}
         title={search.regex ? 'Extended regex; click for plain text' : 'Plain text; click for extended regex'}
       >
         .*
-      </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        className={twMerge(
-          `rounded-sm border border-transparent px-1.5 py-[2px] font-mono text-[0.6875rem] leading-[normal] text-muted ${!fullFile ? '' : 'border-accent bg-[color-mix(in_srgb,_var(--accent)_12%,_transparent)] text-accent'}`,
-        )}
+      </Toggle>
+      <Toggle
+        size="sm"
+        className={TOGGLE}
         aria-label="Search full file"
-        aria-pressed={fullFile}
-        onClick={() => setSearchOptions({ content: fullFile ? 'diff' : 'full' })}
+        pressed={fullFile}
+        onPressedChange={(pressed) => setSearchOptions({ content: pressed ? 'full' : 'diff' })}
         title={
           fullFile
             ? 'Searching full file; click to search diff + context'
@@ -119,8 +115,8 @@ function SearchForm() {
         }
       >
         <ScopeIcon size="0.75rem" />
-      </Button>
-      <span className="min-w-17.5 text-right font-mono text-[0.75rem] leading-[normal] text-muted">
+      </Toggle>
+      <span className="min-w-17.5 text-right font-mono text-[0.75rem] leading-[normal] text-muted-foreground">
         {search.loading
           ? 'searching…'
           : n === 0 && search.query
@@ -133,7 +129,7 @@ function SearchForm() {
               ? `${search.index + 1} / ${n}${search.truncated ? '+' : ''}`
               : ''}
       </span>
-      <Button type="button" variant="ghost" icon onClick={closeSearch} title="Close (Esc)">
+      <Button type="button" variant="ghost" size="icon-sm" onClick={closeSearch} title="Close (Esc)">
         <X size="0.875rem" />
       </Button>
     </form>

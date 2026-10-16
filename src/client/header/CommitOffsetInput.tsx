@@ -1,4 +1,4 @@
-import { Button } from '@/client/ui/Button.js';
+import { Button } from '@/client/ui/button.js';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { useLayoutEffect, useRef } from 'react';
 
@@ -36,7 +36,7 @@ export function CommitOffsetInput({
     input.current?.select();
   };
   return (
-    <div className="mx-0.5 my-0 inline-flex items-stretch overflow-hidden rounded-md bg-surface focus-within:bg-hover">
+    <div className="mx-0.5 my-0 inline-flex items-stretch overflow-hidden rounded-md bg-muted focus-within:bg-accent">
       <input
         className="m-0 box-content w-full max-w-[8ch] min-w-[1ch] flex-[0_1_auto] rounded-md border border-transparent bg-transparent px-1.5 py-0.5 text-center text-foreground [font:inherit] focus:outline-none"
         ref={input}
@@ -62,22 +62,26 @@ export function CommitOffsetInput({
       />
       <div className="grid grid-rows-[1fr_1fr]">
         <Button
-          className="rounded-none border-0 bg-transparent px-0.75 py-0 leading-[1] text-muted hover:bg-surface hover:text-foreground"
+          variant="outline"
+          className="h-auto min-h-0 rounded-none border-0 bg-transparent px-0.75 py-0 leading-[1] text-muted-foreground hover:bg-muted hover:text-foreground sm:h-auto"
           type="button"
           tabIndex={-1}
           aria-label={`Increase ${label.toLowerCase()}`}
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => step(1)}
+          size="sm"
         >
           <ChevronUp size="0.625rem" />
         </Button>
         <Button
-          className="rounded-none border-0 bg-transparent px-0.75 py-0 leading-[1] text-muted hover:bg-surface hover:text-foreground"
+          variant="outline"
+          className="h-auto min-h-0 rounded-none border-0 bg-transparent px-0.75 py-0 leading-[1] text-muted-foreground hover:bg-muted hover:text-foreground sm:h-auto"
           type="button"
           tabIndex={-1}
           aria-label={`Decrease ${label.toLowerCase()}`}
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => step(-1)}
+          size="sm"
         >
           <ChevronDown size="0.625rem" />
         </Button>

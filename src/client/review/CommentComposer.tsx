@@ -1,8 +1,10 @@
-import { Button } from '@/client/ui/Button.js';
+import { Button } from '@/client/ui/button.js';
 import { FileDiff, MessageSquare } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { composerKey } from '@/client/model.js';
 import { useStore } from '@/client/store.js';
+import { Kbd } from '@/client/ui/kbd.js';
+import { Textarea } from '@/client/ui/textarea.js';
 
 /**
  * Inline comment editor rendered as an annotation at the selection's last line. Its header names the
@@ -67,14 +69,14 @@ export function CommentComposer({ label }: { label: string }) {
   };
 
   return (
-    <div className="@container mx-2 my-1 overflow-hidden rounded-md border border-accent bg-surface font-sans text-[0.8125rem]">
-      <div className="flex items-center gap-2 border-b border-b-border bg-hover px-2.5 py-1 text-[0.75rem] text-muted [&>svg]:flex-none [&>svg]:text-accent">
+    <div className="@container mx-2 my-1 overflow-hidden rounded-md border border-primary bg-muted font-sans text-[0.8125rem]">
+      <div className="flex items-center gap-2 border-b border-b-border bg-accent px-2.5 py-1 text-[0.75rem] text-muted-foreground [&>svg]:flex-none [&>svg]:text-primary">
         <MessageSquare size="0.8125rem" />
         <span className="font-mono font-semibold text-foreground">{label}</span>
       </div>
       <div className="p-2">
-        <textarea
-          className="max-h-[60vh] min-h-17.5 w-full resize-y rounded-sm border border-border bg-canvas p-1.5 font-mono text-[0.75rem] leading-[1.5]"
+        <Textarea
+          className="font-mono text-[0.75rem] leading-[1.5] [&_textarea]:max-h-[60vh]"
           ref={ref}
           value={text}
           placeholder="Leave a comment…"
@@ -85,8 +87,8 @@ export function CommentComposer({ label }: { label: string }) {
           }}
         />
         <div className="mt-1.5 flex flex-wrap items-center justify-end gap-1.5">
-          <span className="mr-auto text-[0.75rem] whitespace-nowrap text-muted @max-[36rem]:hidden">
-            <kbd>⌘/Ctrl</kbd>+<kbd>Enter</kbd> to save · <kbd>Esc</kbd> to cancel
+          <span className="mr-auto text-[0.75rem] whitespace-nowrap text-muted-foreground @max-[36rem]:hidden">
+            <Kbd>⌘/Ctrl</Kbd>+<Kbd>Enter</Kbd> to save · <Kbd>Esc</Kbd> to cancel
           </span>
           {!fileLevel && (
             <Button
@@ -94,12 +96,15 @@ export function CommentComposer({ label }: { label: string }) {
               onClick={() => void suggest()}
               title="Insert the selected lines as a suggestion block to edit"
               aria-label="Suggest change"
+              size="sm"
             >
               <FileDiff size="0.8125rem" /> <span className="@max-[18rem]:hidden">Suggest change</span>
             </Button>
           )}
-          <Button onClick={closeDraft}>Cancel</Button>
-          <Button variant="primary" onClick={() => void submit()} disabled={!text.trim() || busy}>
+          <Button variant="outline" onClick={closeDraft} size="sm">
+            Cancel
+          </Button>
+          <Button onClick={() => void submit()} disabled={!text.trim() || busy} size="sm">
             Comment
           </Button>
         </div>
