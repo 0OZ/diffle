@@ -1,4 +1,5 @@
 use super::*;
+use crate::domains::repository::search::line_span::LineSpan;
 use crate::domains::repository::test_repo::TestRepo;
 use crate::domains::revisions::comment_key::CommentKey;
 use crate::domains::revisions::comparison::{Comparison, Liveness};
@@ -110,4 +111,102 @@ async fn a_failed_computation_is_not_remembered() {
     assert!(snapshotter.current().await.is_err());
     fixture.git(&["branch", "nope"]);
     assert!(snapshotter.current().await.is_ok());
+}
+
+/// Twenty lines with line 10 edited, which a patch with the default five lines of context
+/// shows as lines 5 to 15.
+fn edited_in_the_middle(fixture: &TestRepo) {
+    let lines: String = (1..=20).map(|n| format!("line {n}\n")).collect();
+    fixture.commit("a.txt", &lines);
+    std::fs::write(
+        fixture.path().join("a.txt"),
+        lines.replace("line 10\n", "ten\n"),
+    )
+    .unwrap();
+}
+
+fn lines_5_to_15() -> Vec<LineSpan> {
+    vec![LineSpan::new(5, 15).unwrap()]
+}
+
+#[tokio::test]
+async fn the_lines_a_patch_shows_are_kept_without_its_text() {
+    let fixture = TestRepo::init();
+    edited_in_the_middle(&fixture);
+    let snapshotter = working_snapshotter(&fixture).await;
+    let spans = snapshotter
+        .shown_spans(&path("a.txt"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(*spans, *lines_5_to_15());
+    assert!(
+        snapshotter
+            .latest()
+            .patches
+            .cached(&path("a.txt"))
+            .is_none(),
+        "a search must not leave every file's patch in memory"
+    );
+    assert!(
+        snapshotter
+            .shown_spans(&path("c.txt"))
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn the_lines_are_read_once_per_generation() {
+    let fixture = TestRepo::init();
+    edited_in_the_middle(&fixture);
+    let snapshotter = working_snapshotter(&fixture).await;
+    let first = snapshotter
+        .shown_spans(&path("a.txt"))
+        .await
+        .unwrap()
+        .unwrap();
+    // Edit line 2 instead: a fresh read would show lines 1 to 7.
+    let lines: String = (1..=20).map(|n| format!("line {n}\n")).collect();
+    std::fs::write(
+        fixture.path().join("a.txt"),
+        lines.replace("line 2\n", "two\n"),
+    )
+    .unwrap();
+    let again = snapshotter
+        .shown_spans(&path("a.txt"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(*again, *first);
+
+    let version = snapshotter.current().await.unwrap().version().next();
+    snapshotter.invalidate(version);
+    let fresh = snapshotter
+        .shown_spans(&path("a.txt"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(*fresh, [LineSpan::new(1, 7).unwrap()]);
+}
+
+#[tokio::test]
+async fn a_patch_that_was_already_read_supplies_the_lines() {
+    let fixture = TestRepo::init();
+    edited_in_the_middle(&fixture);
+    let snapshotter = working_snapshotter(&fixture).await;
+    snapshotter.patch(&path("a.txt")).await.unwrap().unwrap();
+    let lines: String = (1..=20).map(|n| format!("line {n}\n")).collect();
+    std::fs::write(
+        fixture.path().join("a.txt"),
+        lines.replace("line 2\n", "two\n"),
+    )
+    .unwrap();
+    let spans = snapshotter
+        .shown_spans(&path("a.txt"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(*spans, *lines_5_to_15());
 }

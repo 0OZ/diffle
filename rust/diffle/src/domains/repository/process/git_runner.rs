@@ -5,9 +5,11 @@ use std::ffi::OsStr;
 use std::fmt;
 use std::path::PathBuf;
 use std::process::{ExitStatus, Stdio};
+use std::time::Duration;
 
 use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, Command};
+use tokio::time::timeout;
 
 use super::git_error::GitError;
 
@@ -30,6 +32,10 @@ const PINNED_CONFIG: [&str; 12] = [
     "-c",
     "core.quotePath=false",
 ];
+/// How long one Git command may run before it is killed. A rename search over a very large
+/// range can take minutes; a Git stalled on a dead mount never ends, and would hold the
+/// session's queue (every refresh, mode switch and the shutdown) for as long.
+const FINISH_DEADLINE: Duration = Duration::from_secs(5 * 60);
 /// Reading must not take the index lock: the user's own Git commands run beside us.
 const OPTIONAL_LOCKS: (&str, &str) = ("GIT_OPTIONAL_LOCKS", "0");
 
@@ -138,11 +144,20 @@ impl Finished {
 #[derive(Debug, Clone)]
 pub struct GitRunner {
     cwd: PathBuf,
+    /// Applies to [`finish`](Self::finish) and its variants; streams carry their own.
+    deadline: Duration,
 }
 
 impl GitRunner {
     pub fn new(cwd: impl Into<PathBuf>) -> Self {
-        Self { cwd: cwd.into() }
+        Self::with_deadline(cwd, FINISH_DEADLINE)
+    }
+
+    pub fn with_deadline(cwd: impl Into<PathBuf>, deadline: Duration) -> Self {
+        Self {
+            cwd: cwd.into(),
+            deadline,
+        }
     }
 
     pub async fn finish<I, S>(&self, args: I) -> Result<Finished, GitError>
@@ -153,7 +168,8 @@ impl GitRunner {
         self.finish_with_input(args, &[]).await
     }
 
-    /// Like [`finish`](Self::finish), with `input` on stdin (a path list, a tree to hash).
+    /// Like [`finish`](Self::finish), with `input` on stdin (a path list, a tree to hash). A command
+    /// still running at the deadline is killed and reported as [`GitError::TimedOut`].
     pub async fn finish_with_input<I, S>(&self, args: I, input: &[u8]) -> Result<Finished, GitError>
     where
         I: IntoIterator<Item = S>,
@@ -168,7 +184,15 @@ impl GitRunner {
             let _ = stdin.write_all(input).await;
             let _ = stdin.shutdown().await;
         };
-        let (output, ()) = tokio::join!(child.wait_with_output(), feed);
+        // Giving up drops the child, which kills it.
+        let (output, ()) = timeout(self.deadline, async {
+            tokio::join!(child.wait_with_output(), feed)
+        })
+        .await
+        .map_err(|_| GitError::TimedOut {
+            command: command.clone(),
+            after: self.deadline,
+        })?;
         let output = output.map_err(GitError::Spawn)?;
         Ok(Finished {
             exit: output.status.into(),
@@ -214,3 +238,7 @@ impl GitRunner {
         self.finish(args).await?.into_stdout()
     }
 }
+
+#[cfg(test)]
+#[path = "git_runner_tests.rs"]
+mod tests;

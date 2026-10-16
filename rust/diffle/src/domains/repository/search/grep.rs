@@ -1,6 +1,6 @@
 //! `git grep` over a commit or the checkout, stopped as soon as it has found enough.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use super::line_span::LineSpan;
@@ -13,6 +13,12 @@ use crate::domains::repository::process::git_stream::RecordStream;
 
 /// A search that runs this long is a runaway regex, not a slow repository.
 const GREP_TIMEOUT: Duration = Duration::from_secs(10);
+/// Pathspecs ride the command line, which the OS caps (2 MiB on Linux with the usual stack,
+/// 1 MiB on macOS, the environment included). A list longer than this is not passed: the search
+/// covers the tree and the wanted paths are kept here.
+const PATHSPEC_BUDGET: usize = 64 * 1024;
+/// Per pathspec, besides the path: the `:(literal)` prefix, the terminating NUL and the pointer.
+const PATHSPEC_OVERHEAD: usize = ":(literal)".len() + 1 + std::mem::size_of::<usize>();
 /// A match's text is cut here, so one minified line cannot bloat a response.
 const MAX_TEXT_CHARS: usize = 300;
 /// `-z` prints `path NUL line NUL text NEWLINE`; the newline ends a record after two fields.
@@ -81,12 +87,26 @@ impl GitRepo {
             // Git answers "nothing matched" with 1.
             accepted_exits: &[Exit::NO_ANSWER],
         };
+        let pathspecs = options
+            .paths
+            .as_deref()
+            .filter(|paths| fits_the_command_line(paths));
+        // Paths that did not ride the command line are kept by hand.
+        let kept: Option<HashSet<&RepoPath>> = match (&options.paths, pathspecs) {
+            (Some(paths), None) => Some(paths.iter().collect()),
+            _ => None,
+        };
         let mut matches = self
             .runner
-            .stream_records(grep_args(query, source, limit, options), &spec, |record| {
-                let found = parse_record(record, source)?;
-                within_ranges(&found, options.ranges.as_ref()).then_some(found)
-            })
+            .stream_records(
+                grep_args(query, source, limit, options, pathspecs),
+                &spec,
+                |record| {
+                    let found = parse_record(record, source)?;
+                    let wanted = kept.as_ref().is_none_or(|kept| kept.contains(&found.path));
+                    (wanted && within_ranges(&found, options.ranges.as_ref())).then_some(found)
+                },
+            )
             .await?;
         let truncated = matches.len() > limit;
         matches.truncate(limit);
@@ -94,7 +114,21 @@ impl GitRepo {
     }
 }
 
-fn grep_args(query: &str, source: &TreeSource, limit: usize, options: &GrepOptions) -> Vec<String> {
+fn fits_the_command_line(paths: &[RepoPath]) -> bool {
+    let bytes = paths.iter().fold(0_usize, |sum, path| {
+        sum.saturating_add(path.as_str().len() + PATHSPEC_OVERHEAD)
+    });
+    bytes <= PATHSPEC_BUDGET
+}
+
+/// `pathspecs`: the files to restrict the search to on the command line, when they fit there.
+fn grep_args(
+    query: &str,
+    source: &TreeSource,
+    limit: usize,
+    options: &GrepOptions,
+    pathspecs: Option<&[RepoPath]>,
+) -> Vec<String> {
     // `--no-column`: `grep.column=true` would splice a column field into the `-z` record.
     let mut args = ["grep", "-n", "--no-column", "-I"]
         .map(str::to_owned)
@@ -119,7 +153,7 @@ fn grep_args(query: &str, source: &TreeSource, limit: usize, options: &GrepOptio
     });
     args.push("--".to_owned());
     // Literal pathspecs: a path with `*` or `?` in it must not turn into a glob.
-    for path in options.paths.iter().flatten() {
+    for path in pathspecs.into_iter().flatten() {
         args.push(format!(":(literal){path}"));
     }
     args

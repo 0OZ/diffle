@@ -10,10 +10,12 @@ use crate::domains::changes::generated_files::generated_detector::GeneratedDetec
 use crate::domains::repository::diffing::diff_sides::DiffSides;
 use crate::domains::repository::git_repo::GitRepo;
 use crate::domains::repository::names::repo_path::RepoPath;
+use crate::domains::repository::search::line_span::LineSpan;
 use crate::domains::review::mode::review_mode::ReviewMode;
 use crate::domains::review::review_error::ReviewError;
 use crate::domains::review::snapshot::patch_cache::{PatchCache, PatchSetting};
 use crate::domains::review::snapshot::review_snapshot::Snapshot;
+use crate::domains::review::snapshot::shown_spans::ShownSpans;
 use crate::domains::review::snapshot::snapshot_compute::compute_snapshot;
 use crate::domains::review::snapshot::snapshot_version::SnapshotVersion;
 use crate::domains::settings::context_lines::ContextLines;
@@ -28,6 +30,7 @@ struct Generation {
     context: ContextLines,
     snapshot: OnceCell<Arc<Snapshot>>,
     patches: PatchCache,
+    shown: ShownSpans,
     prewarmed: AtomicBool,
 }
 
@@ -38,6 +41,7 @@ impl Generation {
             context,
             snapshot: OnceCell::new(),
             patches: PatchCache::default(),
+            shown: ShownSpans::default(),
             prewarmed: AtomicBool::new(false),
         })
     }
@@ -107,6 +111,25 @@ impl Snapshotter {
         Ok(Some(
             generation.patches.file(&self.repo, &setting, file).await?,
         ))
+    }
+
+    /// The new-side line spans one changed file's patch shows, or `None` for a path that is not
+    /// one. Unlike [`patch`](Self::patch) it keeps no patch text: a search asks for every file's.
+    pub async fn shown_spans(
+        &self,
+        path: &RepoPath,
+    ) -> Result<Option<Arc<[LineSpan]>>, ReviewError> {
+        let (generation, snapshot) = self.settled().await?;
+        let Some(file) = snapshot.changed_file(path) else {
+            return Ok(None);
+        };
+        let sides = sides_of(&snapshot);
+        let setting = setting(&sides, &generation);
+        let spans = generation
+            .shown
+            .of(&generation.patches, &self.repo, &setting, file)
+            .await?;
+        Ok(Some(spans))
     }
 
     /// Every changed file's patch, concatenated.

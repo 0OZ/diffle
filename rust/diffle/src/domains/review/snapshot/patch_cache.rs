@@ -96,7 +96,7 @@ impl PatchCache {
         Arc::clone(slots.entry(path.clone()).or_default())
     }
 
-    fn cached(&self, path: &RepoPath) -> Option<Arc<String>> {
+    pub(super) fn cached(&self, path: &RepoPath) -> Option<Arc<String>> {
         let slots = self.per_file.lock().unwrap_or_else(PoisonError::into_inner);
         slots.get(path).and_then(|slot| slot.get().cloned())
     }

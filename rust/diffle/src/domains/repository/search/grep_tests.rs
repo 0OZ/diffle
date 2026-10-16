@@ -280,3 +280,6 @@ async fn stops_git_once_enough_matches_arrived_in_a_huge_file() {
     assert!(found.truncated);
     assert!(started.elapsed() < PROMPT);
 }
+
+#[path = "grep_long_paths_tests.rs"]
+mod long_paths;

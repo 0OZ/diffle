@@ -1,17 +1,16 @@
 //! Turning a search request into what to grep: which files, and which lines of them.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::Deserialize;
 
-use crate::domains::comments::relocation::shown_ranges::shown_ranges;
+use crate::domains::changes::changed_file::ChangedFile;
 use crate::domains::repository::names::repo_path::RepoPath;
 use crate::domains::repository::search::line_span::LineSpan;
 use crate::domains::review::review_error::ReviewError;
 use crate::domains::review::snapshot::review_snapshot::Snapshot;
 use crate::domains::review::snapshot::snapshotter::Snapshotter;
 use crate::kernel::bounded::map_limit;
-use crate::kernel::side::Side;
 
 /// Patches fetched at once to learn which lines a diff shows.
 const PATCH_READS: usize = 8;
@@ -74,18 +73,10 @@ pub async fn shown_lines(
     snapshot: &Snapshot,
     within: Option<&[RepoPath]>,
 ) -> Result<(Vec<RepoPath>, HashMap<RepoPath, Vec<LineSpan>>), ReviewError> {
-    let candidates: Vec<RepoPath> = snapshot
-        .parts()
-        .changed
-        .iter()
-        .filter(|file| file.has_new_content() && !file.is_binary())
-        .filter(|file| within.is_none_or(|paths| paths.contains(&file.path)))
-        .map(|file| file.path.clone())
-        .collect();
+    let candidates = searchable_files(&snapshot.parts().changed, within);
     let shown = map_limit(candidates, PATCH_READS, |path| async move {
-        let patch = snapshotter.patch(&path).await?;
-        let spans = patch.map(|patch| spans_of(&patch)).unwrap_or_default();
-        Ok::<_, ReviewError>((path, spans))
+        let spans = snapshotter.shown_spans(&path).await?;
+        Ok::<_, ReviewError>((path, spans.map(|spans| spans.to_vec()).unwrap_or_default()))
     })
     .await;
     let mut ranges = HashMap::new();
@@ -100,10 +91,20 @@ pub async fn shown_lines(
     Ok((files, ranges))
 }
 
-fn spans_of(patch: &str) -> Vec<LineSpan> {
-    shown_ranges(patch, Side::New)
-        .into_iter()
-        .filter_map(|range| LineSpan::new(range.start().get(), range.end().get()).ok())
+/// The changed text files that still exist, limited to `within` when given.
+#[must_use]
+pub fn searchable_files(changed: &[ChangedFile], within: Option<&[RepoPath]>) -> Vec<RepoPath> {
+    // A set: the list can name every changed file of a very large range.
+    let wanted: Option<HashSet<&RepoPath>> = within.map(|paths| paths.iter().collect());
+    changed
+        .iter()
+        .filter(|file| file.has_new_content() && !file.is_binary())
+        .filter(|file| {
+            wanted
+                .as_ref()
+                .is_none_or(|wanted| wanted.contains(&file.path))
+        })
+        .map(|file| file.path.clone())
         .collect()
 }
 
