@@ -57,6 +57,7 @@
     "prepack": "npm run build"
   },
   "dependencies": {
+    "@base-ui/react": "^1.9.0",
     "@hono/node-server": "^1.14.0",
     "@octokit/core": "^7.0.8",
     "@pierre/diffs": "1.5.2",
