@@ -16,8 +16,10 @@ QUIET_LOAD = float(os.environ.get('BENCH_MAX_LOAD') or CORES / 4)
 QUIET_WAIT_S = 600
 CLK = os.sysconf('SC_CLK_TCK')
 
+# Without a Node build there is no real client; a stub page keeps `/` servable for Rust-only runs.
+CLIENT_DIR = os.path.join(NODE_BUILD, 'dist', 'client') if NODE_BUILD else os.path.join(WORK, 'stub-client')
 RUST = [os.environ.get('BENCH_RUST') or os.path.join(HERE, '..', 'target', 'release', 'diffle'),
-        '--client-dir', os.path.join(NODE_BUILD, 'dist', 'client')]
+        '--client-dir', CLIENT_DIR]
 NODE = ['node', os.path.join(NODE_BUILD, 'dist', 'server', 'main.js')]
 COMMON = ['--no-open', '-p', '0', '--no-lsp']
 
@@ -79,8 +81,12 @@ def main():
     sc = SCENARIOS[scenario]
     if not sc['repo'] or not os.path.isdir(sc['repo']):
         sys.exit(f"bench.py: no repository for '{scenario}' (looked at {sc['repo'] or 'BENCH_REAL_REPO, unset'})")
-    if not os.path.isfile(NODE[1]):
+    if server == 'node' and not os.path.isfile(NODE[1]):
         sys.exit(f'bench.py: BENCH_NODE_BUILD must name a checkout built with `npm run build`; {NODE[1]} is missing')
+    if not NODE_BUILD:
+        os.makedirs(CLIENT_DIR, exist_ok=True)
+        with open(os.path.join(CLIENT_DIR, 'index.html'), 'w') as f:
+            f.write('<!doctype html><title>diffle</title>')
     quiet = wait_until_quiet()
     load_before = os.getloadavg()[0]
     run_dir = os.path.join(WORK, f'run-{scenario}-{server}')

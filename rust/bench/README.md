@@ -57,3 +57,28 @@ deletion and a malformed frame). It also records each server's stderr and probes
 
 **The report names files and URLs of the repository it ran on.** When that repository is private,
 keep the report out of the diffle checkout and out of anything public; quote counts only.
+
+## Regression gate: `regression/run.py`
+
+CI (`.github/workflows/rust-bench.yml`) builds the Rust server at the pull request's base and head,
+benchmarks both on the same runner and fails when the head got slower. It needs no Node build:
+
+```sh
+python3 rust/bench/regression/run.py --base /path/to/base/diffle --head rust/target/release/diffle
+python3 -m unittest discover -v -s rust/bench/regression      # the verdict logic
+```
+
+It runs `bench.py big rust` five times per build, alternating the order, and compares medians of
+requests per second per endpoint, start to first snapshot, memory after load, CPU, and edit to
+pushed snapshot. A metric counts as a regression only when
+
+- the median is worse by more than the threshold (`--threshold`, 20% by default),
+- every head run is worse than every base run (otherwise the row says `noisy`), and
+- the absolute change exceeds a floor (0.5 req/s, 5 ms, 5 MB, 0.25 s), so 2 ms to 4 ms is not "twice as slow".
+
+Requests that fail or answer non-2xx where the base had none also fail the run. Exit status: 0 clean,
+1 regression, 2 the benchmark itself broke (no number is not a pass). The static page is a stub, so
+the `static index` row measures the server, not the client bundle.
+
+The gate catches regressions of tens of percent. A shared runner hides smaller ones; for those, run
+the full comparison above on a quiet machine.
