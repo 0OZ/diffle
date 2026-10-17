@@ -3,6 +3,8 @@ import { TipSurface, type TipAnchor } from './TipSurface.js';
 
 /** Pointer rest before a control's tooltip appears; the browser's own `title` tip waits about a second. */
 const SHOW_MS = 250;
+/** A tip that opens within this long of the last one closing skips the pointer-rest delay, so sweeping across rows reads as one tip following the pointer. */
+const WARM_MS = 400;
 
 interface PlainTip {
   text: string;
@@ -21,6 +23,8 @@ export function TooltipHost() {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let active: HTMLElement | null = null;
     let stashed: string | null = null;
+    let drawn = false;
+    let closedAt = -Infinity;
 
     const stop = () => {
       if (timer !== null) clearTimeout(timer);
@@ -32,11 +36,14 @@ export function TooltipHost() {
       if (active && stashed !== null && !active.hasAttribute('title')) active.setAttribute('title', stashed);
       active = null;
       stashed = null;
+      if (drawn) closedAt = performance.now();
+      drawn = false;
       setTip(null);
     };
     const show = (el: HTMLElement, text: string, delay: number) => {
       stop();
       const draw = () => {
+        drawn = true;
         const r = el.getBoundingClientRect();
         setTip({ text, anchor: { left: r.left, top: r.top, bottom: r.bottom } });
       };
@@ -55,7 +62,7 @@ export function TooltipHost() {
       active = el;
       stashed = text;
       el.removeAttribute('title');
-      show(el, text, delay);
+      show(el, text, performance.now() - closedAt < WARM_MS ? 0 : delay);
     };
     // `e.target` is retargeted to the shadow host for a node inside a shadow root; the composed path keeps the node.
     const target = (e: Event): HTMLElement | null => {
@@ -148,7 +155,7 @@ export function TooltipHost() {
   return (
     <TipSurface
       anchor={tip.anchor}
-      className="pointer-events-none max-w-[min(28rem,_90vw)] wrap-anywhere whitespace-pre-line"
+      className="pointer-events-none max-w-[min(28rem,_90vw)] origin-top-left [animation:tip-in_150ms_ease-out] wrap-anywhere whitespace-pre-line motion-reduce:animate-none"
     >
       {tip.text}
     </TipSurface>
