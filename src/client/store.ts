@@ -153,7 +153,7 @@ const DEFAULT_LAYOUT: LayoutState = {
   panelWidth: null,
   treeVisible: true,
   panelVisible: true,
-  treeScroll: true,
+  treeScroll: false,
 };
 function readLayout(): LayoutState {
   try {
