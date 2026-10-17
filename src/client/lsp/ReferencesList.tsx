@@ -3,6 +3,7 @@ import { twMerge } from 'tailwind-merge';
 import { FileCode2 } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { FilePath } from '../FilePath.js';
+import { focusReview } from '../keyboard/useKeymap.js';
 import { overflow } from '../review/geometry.js';
 import { type Match, useStore } from '../store.js';
 import type { ThemeChoice } from '../theme.js';
@@ -75,6 +76,11 @@ export function ReferencesList() {
     <Dialog open onOpenChange={(_, { reason }) => reason !== 'escape-key' && close()}>
       <DialogContent
         aria-label="References"
+        // The review pane is not tabbable, so Base UI would hand focus to a file header's button instead.
+        finalFocus={() => {
+          focusReview();
+          return false;
+        }}
         className={twMerge(
           'flex max-h-[80vh] w-[min(60rem,_92vw)] flex-col overflow-hidden p-0',
           refs.peek && 'h-[80vh] w-[min(96rem,_96vw)]',

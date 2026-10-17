@@ -149,17 +149,7 @@ test.describe('with a language server', () => {
   });
 
   test('Escape leaves a references peek before it closes the list', async ({ page, diffle }) => {
-    await gotoFile(page, 'tally/ledger.py');
-    await waitForLsp(diffle.url);
-    await clickLine(page, 'tally/ledger.py', LINE);
-    await page.mouse.move(0, 0);
-    const references = page.getByRole('dialog', { name: 'References' });
-    // The first request can land while the bridge is still opening the document; ask again then.
-    await expect(async () => {
-      await page.keyboard.press('0');
-      await page.keyboard.type('gA');
-      await expect(references).toBeVisible({ timeout: 2000 });
-    }).toPass({ timeout: 10000 });
+    const references = await openReferences(page, diffle.url, LINE);
     await page.keyboard.press(' ');
     const peek = page.getByLabel('Peek');
     await expect(peek).toBeVisible();
@@ -169,4 +159,28 @@ test.describe('with a language server', () => {
     await page.keyboard.press('Escape');
     await expect(references).toHaveCount(0);
   });
+
+  test('regression: a jump from the references list leaves focus on the review', async ({ page, diffle }) => {
+    const references = await openReferences(page, diffle.url, LINE);
+    await page.keyboard.press('Enter');
+    await expect(references).toHaveCount(0);
+    // Not a file header's Copy path button, which the next Space would press.
+    await expect(page.locator('main[tabindex]')).toBeFocused();
+  });
 });
+
+/** Open the references list for the symbol starting `tally/ledger.py`'s line `line`. */
+async function openReferences(page: Page, url: string, line: number) {
+  await gotoFile(page, 'tally/ledger.py');
+  await waitForLsp(url);
+  await clickLine(page, 'tally/ledger.py', line);
+  await page.mouse.move(0, 0);
+  const references = page.getByRole('dialog', { name: 'References' });
+  // The first request can land while the bridge is still opening the document; ask again then.
+  await expect(async () => {
+    await page.keyboard.press('0');
+    await page.keyboard.type('gA');
+    await expect(references).toBeVisible({ timeout: 2000 });
+  }).toPass({ timeout: 10000 });
+  return references;
+}
