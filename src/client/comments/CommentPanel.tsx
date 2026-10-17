@@ -1,4 +1,4 @@
-import { Dialog } from '../ui/Dialog.js';
+import { Dialog, DialogContent } from '../ui/dialog.js';
 import { CopyIcon } from '../ui/CopyIcon.js';
 import { twMerge } from 'tailwind-merge';
 import { Button } from '../ui/Button.js';
@@ -193,21 +193,23 @@ export function CommentPanel() {
         ))}
       </div>
       {manual && (
-        <Dialog label="Copy manually" onClose={() => setManual(null)}>
-          <h3 className="m-0 mb-2">Copy manually</h3>
-          <p className="m-0 mb-2 text-muted">
-            The browser blocked clipboard access. Select the text below and press Ctrl/⌘+c.
-          </p>
-          <textarea
-            className="min-h-40 w-full rounded-md border border-border bg-surface p-2 font-mono text-[0.75rem]"
-            readOnly
-            value={manual}
-            autoFocus
-            onFocus={(e) => e.currentTarget.select()}
-          />
-          <div className="mt-2.5 flex justify-end gap-1.5">
-            <Button onClick={() => setManual(null)}>Close</Button>
-          </div>
+        <Dialog open onOpenChange={() => setManual(null)}>
+          <DialogContent aria-label="Copy manually">
+            <h3 className="m-0 mb-2">Copy manually</h3>
+            <p className="m-0 mb-2 text-muted">
+              The browser blocked clipboard access. Select the text below and press Ctrl/⌘+c.
+            </p>
+            <textarea
+              className="min-h-40 w-full rounded-md border border-border bg-surface p-2 font-mono text-[0.75rem]"
+              readOnly
+              value={manual}
+              autoFocus
+              onFocus={(e) => e.currentTarget.select()}
+            />
+            <div className="mt-2.5 flex justify-end gap-1.5">
+              <Button onClick={() => setManual(null)}>Close</Button>
+            </div>
+          </DialogContent>
         </Dialog>
       )}
     </aside>

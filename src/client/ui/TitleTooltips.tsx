@@ -1,60 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { twMerge } from 'tailwind-merge';
+import { useEffect, useState } from 'react';
+import { TipSurface, type TipAnchor } from './TipSurface.js';
 
 /** Pointer rest before a control's tooltip appears; the browser's own `title` tip waits about a second. */
 const SHOW_MS = 250;
-/** Space between the anchor and the tip. */
-const GAP = 6;
-/** Shared skin. Fixed positioning keeps tooltips out of every scroll container's clipping. */
-const SURFACE =
-  'fixed z-40 rounded-lg border border-border bg-canvas px-3 py-2 text-[0.75rem] shadow-[0_0.5rem_1.5rem_rgba(0,_0,_0,_0.18)]';
-
-/** Viewport box a tooltip hangs from. */
-export interface TipAnchor {
-  left: number;
-  top: number;
-  bottom: number;
-}
-
-/** Tooltip box below its anchor, above it near the bottom edge, clamped to the viewport's sides. */
-export function TooltipSurface({
-  boxRef,
-  anchor,
-  className,
-  children,
-  onPointerEnter,
-  onPointerLeave,
-}: {
-  boxRef?: RefObject<HTMLDivElement | null>;
-  anchor: TipAnchor;
-  className?: string;
-  children: ReactNode;
-  onPointerEnter?: () => void;
-  onPointerLeave?: () => void;
-}) {
-  const own = useRef<HTMLDivElement>(null);
-  const ref = boxRef ?? own;
-  // Place after measuring, before paint: the reader never sees the tip jump from its fallback spot.
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const { width, height } = el.getBoundingClientRect();
-    const below = anchor.bottom + GAP + height <= window.innerHeight;
-    el.style.left = `${Math.max(8, Math.min(anchor.left, window.innerWidth - width - 8))}px`;
-    el.style.top = `${below ? anchor.bottom + GAP : Math.max(8, anchor.top - GAP - height)}px`;
-  }, [anchor, ref]);
-  return (
-    <div
-      ref={ref}
-      role="tooltip"
-      className={twMerge(SURFACE, className)}
-      onPointerEnter={onPointerEnter}
-      onPointerLeave={onPointerLeave}
-    >
-      {children}
-    </div>
-  );
-}
 
 interface PlainTip {
   text: string;
@@ -198,11 +146,11 @@ export function TooltipHost() {
 
   if (!tip) return null;
   return (
-    <TooltipSurface
+    <TipSurface
       anchor={tip.anchor}
       className="pointer-events-none max-w-[min(28rem,_90vw)] wrap-anywhere whitespace-pre-line"
     >
       {tip.text}
-    </TooltipSurface>
+    </TipSurface>
   );
 }
