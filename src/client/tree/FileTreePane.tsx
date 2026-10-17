@@ -349,14 +349,12 @@ export function FileTreePane() {
           <Button
             variant="ghost"
             icon
-            className={scrolls ? '' : 'opacity-45'}
+            className={
+              scrolls ? 'border-accent bg-[color-mix(in_srgb,_var(--accent)_12%,_transparent)] text-accent' : ''
+            }
             aria-label="Scroll long names"
             aria-pressed={scrolls}
-            title={
-              scrolls
-                ? 'Long names scroll sideways: click to shorten them instead'
-                : 'Long names are shortened: click to scroll them sideways'
-            }
+            title={scrolls ? 'Long names scroll. Click to shorten.' : 'Long names shortened. Click to scroll.'}
             onClick={() => setLayout({ treeScroll: !scrolls })}
           >
             <ArrowLeftRight size="0.875rem" />
