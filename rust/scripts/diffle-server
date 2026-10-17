@@ -1,0 +1,144 @@
+#!/bin/sh
+# diffle-server: review a repository on another machine in the browser on this one.
+
+usage() {
+  cat <<'USAGE'
+usage: diffle-server HOST [DIR] [-- DIFFLE_ARGS...]
+       diffle-server init sh|fish
+
+Starts the diffle server on HOST over ssh, forwards its port to this machine and opens the page
+once the server answers. Without DIR it lists the git repositories on HOST for you to pick with
+fzf. Ctrl+C ends the review; the open comments are printed as the agent prompt.
+
+  diffle-server hopper.sh                       pick a repository with fzf
+  diffle-server hopper.sh ~/development/flatmo  review its uncommitted changes
+  diffle-server hopper.sh ~/development/flatmo -- main...HEAD
+
+To type `diffle server hopper.sh`, add this to your shell's startup file:
+  sh/zsh:  eval "$(diffle-server init sh)"
+  fish:    diffle-server init fish | source
+
+On HOST the Rust diffle binary and its client build must sit side by side:
+  ~/.local/lib/diffle-rs/diffle    ~/.local/lib/diffle-rs/client/
+
+Environment:
+  DIFFLE_REMOTE_BIN    the diffle binary on HOST          ($HOME/.local/lib/diffle-rs/diffle)
+  DIFFLE_REMOTE_ROOTS  where to look for repositories     ($HOME; searched four levels deep)
+  DIFFLE_SSH_OPTS      extra ssh options, e.g. "-o BatchMode=yes -p 2222"
+  DIFFLE_PORT          the port on this machine           (random, 20000-59999)
+  DIFFLE_REMOTE_PORT   the port the server uses on HOST   (random, never equal to DIFFLE_PORT)
+  DIFFLE_FZF           the fuzzy finder to run            (fzf)
+Paths and arguments may use letters, digits and _ . / ~ @ % + = : , - only.
+USAGE
+}
+
+die() { printf 'diffle-server: %s\n' "$1" >&2; exit "${2:-1}"; }
+
+# Words that go to the remote shell must pass through it unchanged.
+plain() {
+  case $1 in '' | *[!A-Za-z0-9_./~@%+=:,-]*) return 1 ;; esac
+}
+
+init() {
+  case ${1-} in
+    sh) cat <<'FUNCTION'
+diffle() { if [ "${1-}" = server ]; then shift; diffle-server "$@"; else command diffle "$@"; fi; }
+FUNCTION
+      ;;
+    fish) cat <<'FUNCTION'
+function diffle
+    if test "$argv[1]" = server
+        diffle-server $argv[2..-1]
+    else
+        command diffle $argv
+    end
+end
+FUNCTION
+      ;;
+    *) usage >&2; exit 2 ;;
+  esac
+}
+
+random_port() { echo $(( $(od -An -N2 -tu2 /dev/urandom | tr -d ' ') % 40000 + 20000 )); }
+
+# A random port other than $1: the tunnel's end and the server's end may share a machine.
+other_port() {
+  while :; do
+    candidate=$(random_port)
+    [ "$candidate" != "$1" ] && { echo "$candidate"; return; }
+  done
+}
+
+free_port() {
+  [ -n "${DIFFLE_PORT-}" ] && { echo "$DIFFLE_PORT"; return; }
+  while :; do
+    candidate=$(random_port)
+    nc -z 127.0.0.1 "$candidate" 2>/dev/null || { echo "$candidate"; return; }
+  done
+}
+
+# Every git repository under the roots on the host, one path per line.
+list_repositories() {
+  # shellcheck disable=SC2086 # the options are words on purpose
+  ssh ${DIFFLE_SSH_OPTS-} "$1" sh -s -- ${DIFFLE_REMOTE_ROOTS:-'$HOME'} <<'REMOTE'
+for root in "$@"; do
+  find "$root" -maxdepth 4 \( -name node_modules -o -name target -o -name Library -o -name .cache \) -prune \
+    -o -name .git -print 2>/dev/null
+done | sed 's|/\.git$||' | sort -u
+REMOTE
+}
+
+choose_repository() {
+  command -v "${DIFFLE_FZF:-fzf}" > /dev/null 2>&1 || die 'no fzf found: install it, or name the directory' 2
+  repos=$(list_repositories "$1") || exit $?
+  [ -n "$repos" ] || die "no git repositories found on $1"
+  printf '%s\n' "$repos" | "${DIFFLE_FZF:-fzf}" --prompt "$1 > " --height 40% --reverse --select-1 --exit-0
+}
+
+# Opens the page once the tunnel and the server both answer.
+open_when_ready() {
+  tries=0
+  while [ "$tries" -lt 120 ]; do
+    if curl -fsS -o /dev/null --max-time 2 "$1" 2>/dev/null; then
+      "${DIFFLE_OPEN:-$(command -v open || command -v xdg-open)}" "$1"
+      return
+    fi
+    sleep 0.5
+    tries=$((tries + 1))
+  done
+}
+
+main() {
+  case ${1-} in
+    -h | --help) usage; exit 0 ;;
+    init) shift; init "$@"; exit $? ;;
+    '') usage >&2; exit 2 ;;
+  esac
+  host=$1
+  shift
+  dir=
+  if [ $# -gt 0 ] && [ "$1" != -- ]; then dir=$1; shift; fi
+  [ "${1-}" = -- ] && shift
+  plain "$host" || die "not a plain host name: $host" 2
+  for word in "$@"; do
+    plain "$word" || die "not a plain word for the remote shell: $word" 2
+  done
+  if [ -z "$dir" ]; then
+    dir=$(choose_repository "$host") || exit $?
+    [ -n "$dir" ] || exit 1
+  fi
+  plain "$dir" || die "not a plain path for the remote shell: $dir" 2
+  port=$(free_port)
+  remote_port=${DIFFLE_REMOTE_PORT:-$(other_port "$port")}
+  url=http://127.0.0.1:$port
+  open_when_ready "$url" &
+  waiting=$!
+  trap 'kill "$waiting" 2>/dev/null' EXIT
+  status=0
+  # shellcheck disable=SC2086 # the options are words on purpose
+  ssh ${DIFFLE_SSH_OPTS-} -t -o ExitOnForwardFailure=yes -L "$port:127.0.0.1:$remote_port" "$host" \
+    "${DIFFLE_REMOTE_BIN:-'$HOME/.local/lib/diffle-rs/diffle'}" -C "$dir" -p "$remote_port" --no-open "$@" || status=$?
+  exit "$status"
+}
+
+main "$@"
