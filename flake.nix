@@ -77,6 +77,10 @@
             pkgs.gh
             pkgs.pyrefly
           ];
+          csharp = mkDiffle [
+            pkgs.gh
+            pkgs.roslyn-ls
+          ];
         }
       );
 
