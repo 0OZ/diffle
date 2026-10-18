@@ -6,10 +6,13 @@ import { z } from 'zod';
  * server is told in `didOpen`, so it must be the spec's spelling, not ours.
  */
 export const LanguageIdSchema = z.enum([
+  'astro',
   'c',
   'cpp',
+  'css',
   'go',
   'haskell',
+  'html',
   'java',
   'javascript',
   'javascriptreact',
@@ -28,6 +31,7 @@ export const LanguageIdSchema = z.enum([
   'toml',
   'typescript',
   'typescriptreact',
+  'vue',
   'yaml',
   'zig',
 ]);
@@ -589,21 +593,77 @@ export const LspProcessStatusSchema = z.object({
   message: z.string().optional(),
   /** Active work reported through LSP work-done progress; absent when none is reported. */
   activity: z.string().array().optional(),
-  /** Last warning or error reported by the server, not a process failure. */
+  /**
+   * What the server last said to the reader through `window/showMessage`, when it was a
+   * warning or an error. Its log never stands here: that is `log`.
+   */
   notice: z
     .object({
       severity: z.enum(['warning', 'error']),
       message: z.string(),
     })
     .optional(),
-  /** Bounded stderr tail for servers that report failures only through their process output. */
-  stderr: z.string().optional(),
+  /** The server's output channel in brief; `GET /api/lsp/log` lists the lines. */
+  log: z.object({
+    /** Changes whenever a line is added or repeated, so a reader showing the log knows to fetch again. */
+    seq: z.number().int().nonnegative(),
+    /** Error and warning lines since the server started, kept or not. */
+    errors: z.number().int().nonnegative(),
+    warnings: z.number().int().nonnegative(),
+  }),
 });
 export type LspProcessStatus = z.infer<typeof LspProcessStatusSchema>;
 
+/** Where a log line came from: `window/showMessage`, `window/logMessage`, or the process's stderr. */
+export const LspLogSourceSchema = z.enum(['message', 'log', 'stderr']);
+export type LspLogSource = z.infer<typeof LspLogSourceSchema>;
+export const LspLogLevelSchema = z.enum(['error', 'warning', 'info', 'log']);
+export type LspLogLevel = z.infer<typeof LspLogLevelSchema>;
+
+/** One line of a server's output channel. The bridge keeps a bounded number of recent ones. */
+export const LspLogEntrySchema = z.object({
+  /** Stable identity of the line within the run. */
+  id: z.number().int().positive(),
+  /** Milliseconds since the epoch, of its latest repeat. */
+  time: z.number(),
+  source: LspLogSourceSchema,
+  level: LspLogLevelSchema,
+  message: z.string(),
+  /** How many times in a row the server said exactly this. */
+  count: z.number().int().positive(),
+});
+export type LspLogEntry = z.infer<typeof LspLogEntrySchema>;
+
+/** `GET /api/lsp/log?server=<command>`: the retained lines of one server, oldest first. */
+export const LspLogQuerySchema = z.object({ server: z.string().min(1) });
+export const LspLogResponseSchema = z.object({ entries: LspLogEntrySchema.array() });
+export type LspLogResponse = z.infer<typeof LspLogResponseSchema>;
+
+/**
+ * A request the bridge sends a server only once it advertised the capability, in its
+ * `initialize` result or by registering it later, as an editor does. Semantic tokens and
+ * document highlights are advisory: without them the answer is empty, never an error.
+ */
+export const LspFeatureSchema = z.enum([
+  'definition',
+  'typeDefinition',
+  'hover',
+  'references',
+  'documentSymbol',
+  'workspaceSymbol',
+  'semanticTokens',
+  'documentHighlight',
+]);
+export type LspFeature = z.infer<typeof LspFeatureSchema>;
+
 /** A process plus the languages the pool routes to it. */
 export const LspServerStatusSchema = LspProcessStatusSchema.extend({
+  /** Languages it owns: asked first, and alone for highlights, token kinds and outlines. */
   languages: LanguageIdSchema.array(),
+  /** Languages it answers for beside their owner, such as Tailwind's class hovers in markup. */
+  joins: LanguageIdSchema.array(),
+  /** What its `initialize` result advertised; empty while starting. */
+  supports: LspFeatureSchema.array(),
 });
 export type LspServerStatus = z.infer<typeof LspServerStatusSchema>;
 
@@ -612,6 +672,11 @@ export const LspMissingSchema = z.object({
   language: LanguageIdSchema,
   /** Programs looked for on PATH, so the UI can name what to install. Empty when config turned the language off. */
   tried: z.string().array(),
+  /**
+   * A program that is on PATH but lacks what the server loads from beside it, such as a
+   * `vue-language-server` without its tsserver plugin: installing more is not the answer.
+   */
+  why: z.string().optional(),
 });
 export type LspMissing = z.infer<typeof LspMissingSchema>;
 
@@ -624,9 +689,17 @@ export const LspStatusSchema = z.object({
 });
 export type LspStatus = z.infer<typeof LspStatusSchema>;
 
+/**
+ * Why an empty answer may be incomplete: the server reported background work (indexing, loading
+ * the workspace) while answering, or a server that would also have answered was unavailable.
+ * Never set beside a non-empty answer.
+ */
+const inconclusive = z.string().optional();
+
 /** Results the server could place: snapshot paths, or files it read from disk on the language server's word. */
 export const LspLocationsResponseSchema = z.object({
   locations: LspLocationSchema.array(),
+  inconclusive,
 });
 export type LspLocationsResponse = z.infer<typeof LspLocationsResponseSchema>;
 
@@ -643,6 +716,7 @@ export const LspHoverResponseSchema = z.object({
       endCol: z.number(),
     })
     .optional(),
+  inconclusive,
 });
 export type LspHoverResponse = z.infer<typeof LspHoverResponseSchema>;
 
@@ -684,6 +758,10 @@ export const LspSymbolSchema = z.object({
 });
 export type LspSymbol = z.infer<typeof LspSymbolSchema>;
 
+/** `GET /api/lsp/symbols`: a file's outline with `path`, else the repository's symbols matching `q`. */
+export const LspSymbolsResponseSchema = z.object({ symbols: LspSymbolSchema.array(), inconclusive });
+export type LspSymbolsResponse = z.infer<typeof LspSymbolsResponseSchema>;
+
 /** Derived per changed file: 'restale' means viewed at an older blob. */
 export const ViewedStateSchema = z.enum(['unviewed', 'viewed', 'restale']);
 export type ViewedState = z.infer<typeof ViewedStateSchema>;
@@ -721,11 +799,13 @@ export function followsCheckout(snap: Pick<Snapshot, 'newSha' | 'headSha'>): boo
 
 /** Extension (no dot, lowercase) → language. `.h` goes to c because clangd serves both. */
 const LANGUAGE_BY_EXT: Record<string, LanguageId> = {
+  astro: 'astro',
   bash: 'shellscript',
   c: 'c',
   cc: 'cpp',
   cjs: 'javascript',
   cpp: 'cpp',
+  css: 'css',
   cts: 'typescript',
   cxx: 'cpp',
   go: 'go',
@@ -733,6 +813,8 @@ const LANGUAGE_BY_EXT: Record<string, LanguageId> = {
   hh: 'cpp',
   hpp: 'cpp',
   hs: 'haskell',
+  htm: 'html',
+  html: 'html',
   hxx: 'cpp',
   java: 'java',
   js: 'javascript',
@@ -757,6 +839,7 @@ const LANGUAGE_BY_EXT: Record<string, LanguageId> = {
   toml: 'toml',
   ts: 'typescript',
   tsx: 'typescriptreact',
+  vue: 'vue',
   yaml: 'yaml',
   yml: 'yaml',
   zig: 'zig',
@@ -769,44 +852,6 @@ export const LANGUAGE_IDS: LanguageId[] = [...new Set(Object.values(LANGUAGE_BY_
 export function languageOf(path: string): LanguageId | null {
   const ext = /\.([^./\\]+)$/.exec(path)?.[1]?.toLowerCase();
   return (ext && LANGUAGE_BY_EXT[ext]) || null;
-}
-
-/**
- * Why the language server cannot answer for `path` — or, with no path, for a
- * repository-wide request — and null when it can. Shared so the client's flash and the
- * API's 409 say the same thing. The caller checks `followsCheckout` itself.
- */
-export function lspBlocker(lsp: LspStatus, path?: string): string | null {
-  if (!lsp.enabled) return 'Language servers are off for this run (--no-lsp)';
-  if (path == null) {
-    if (!lsp.servers.length) return noServer(lsp);
-    return lsp.servers.some((s) => s.state === 'ready') ? null : notReady(lsp.servers[0]!);
-  }
-  const language = languageOf(path);
-  if (!language) return `No language server for ${/(\.[^./\\]+)$/.exec(path)?.[1] ?? 'these'} files`;
-  const server = lsp.servers.find((s) => s.languages.includes(language));
-  if (!server) return noServer(lsp, language);
-  return server.state === 'ready' ? null : notReady(server);
-}
-
-function notReady(s: LspServerStatus): string {
-  return s.state === 'starting'
-    ? `${s.name} is starting…`
-    : `${s.name} is unavailable: ${s.message ?? 'unknown error'}`;
-}
-
-/** No server serves `language` (or nothing runs at all): say what the reader can do about it. */
-function noServer(lsp: LspStatus, language?: LanguageId): string {
-  const missing = language == null ? lsp.missing : lsp.missing.filter((m) => m.language === language);
-  const absent = missing.filter((m) => m.tried.length > 0);
-  const off = missing.filter((m) => m.tried.length === 0).map((m) => m.language);
-  if (absent.length) {
-    const langs = [...new Set(absent.map((m) => m.language))].join(', ');
-    const programs = [...new Set(absent.flatMap((m) => m.tried))].join(', ');
-    return `No language server for ${langs} on PATH: install one of ${programs}`;
-  }
-  if (off.length) return `The language server for ${off.join(', ')} is off in your diffle config`;
-  return language == null ? 'No language server runs for this diff' : `No language server runs for ${language}`;
 }
 
 /** Writable HTTP config fields; unknown keys, including CLI-only lspCommands, are stripped. */

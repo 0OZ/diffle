@@ -2,9 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import type { LanguageId } from '../../shared/protocol.js';
 import { writeFileAtomic } from '../persist.js';
-import { argv0 } from './which.js';
 import { JsonRpcError } from './JsonRpc.js';
 
 export const SCHEMA_CATALOG = 'https://www.schemastore.org/api/json/catalog.json';
@@ -18,6 +16,7 @@ const SchemaCatalogSchema = z.object({ schemas: z.array(z.unknown()) });
 const ConfigurationParamsSchema = z.object({
   items: z.array(z.object({ section: z.string().optional() })),
 });
+/** A server's settings tree, as `workspace/didChangeConfiguration` carries it. */
 export type LspSettings = Record<string, unknown>;
 
 /** Valid catalog entries, in the association format understood by the JSON server. */
@@ -55,25 +54,11 @@ export async function loadSchemaCatalog(
   }
 }
 
-/** Default schema settings for the languages routed to a process. */
-export async function settingsFor(languages: LanguageId[], command: string): Promise<LspSettings> {
-  const settings: LspSettings = {};
-  if (languages.includes('yaml')) settings.yaml = { hover: true, schemaStore: { enable: true, url: SCHEMA_CATALOG } };
-  const program = argv0(command)
-    .split(/[\\/]/)
-    .pop()
-    ?.replace(/\.(exe|cmd|bat)$/i, '');
-  if (languages.includes('toml') && program === 'taplo')
-    settings.evenBetterToml = { schema: { enabled: true, catalogs: [SCHEMA_CATALOG] } };
-  if (languages.some((l) => l === 'json' || l === 'jsonc')) settings.json = { schemas: await loadSchemaCatalog() };
-  return settings;
-}
-
 /**
- * Used by LspBridge to answer language servers' `workspace/configuration` requests.
- * Returns settings for each requested section in order, or null for unknown sections;
- * an omitted section requests all settings. Params are untrusted JSON from the server.
- * Malformed requests throw JSON-RPC Invalid Params before any settings are returned.
+ * Answers a language server's `workspace/configuration` request from `settings`:
+ * each requested section in order, null for unknown sections, and the whole tree
+ * for an omitted section. Params are untrusted JSON from the server; malformed
+ * requests throw JSON-RPC Invalid Params before any settings are returned.
  */
 export function configurationItems(settings: LspSettings, params: unknown): unknown[] {
   const request = ConfigurationParamsSchema.safeParse(params);

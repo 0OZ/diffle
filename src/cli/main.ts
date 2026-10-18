@@ -21,6 +21,7 @@ import {
   type UserConfig,
   type FollowRefs,
 } from '../shared/protocol.js';
+import { languagesLabel } from '../shared/lsp.js';
 import {
   collectLanguage,
   collectLspOverride,
@@ -280,7 +281,13 @@ program
         answer.set(language, `${s.command}${lspCommands[language] == null ? '' : c.dim(' (config)')}`);
     // An empty override is off, and names nothing to install: the resolver leaves `tried` empty.
     for (const m of missing)
-      answer.set(m.language, c.dim(m.tried.length ? `not on PATH (tried ${m.tried.join(', ')})` : 'off in config'));
+      answer.set(
+        m.language,
+        c.dim(m.why ?? (m.tried.length ? `not on PATH (tried ${m.tried.join(', ')})` : 'off in config')),
+      );
+    // A server joining a language answers beside its owner, so it is listed after it.
+    for (const s of servers)
+      for (const language of s.joins) answer.set(language, `${answer.get(language) ?? ''} ${c.dim('+')} ${s.command}`);
     const width = Math.max(...LANGUAGE_IDS.map((l) => l.length));
     for (const language of LANGUAGE_IDS) console.log(`${language.padEnd(width)}  ${answer.get(language) ?? ''}`);
   });
@@ -435,7 +442,7 @@ async function serve(
       );
     if (lsp) {
       const { servers, missing } = lsp.status();
-      const names = servers.map((s) => `${s.name} ${c.dim(`(${s.languages.join(', ')})`)}`).join(', ');
+      const names = servers.map((s) => `${s.name} ${c.dim(`(${languagesLabel(s)})`)}`).join(', ');
       if (!followsCheckout(snap))
         console.error(`🧭 ${c.dim('no language server: symbol navigation needs the new side to be the checkout')}`);
       else console.error(`🧭 ${c.dim('lsp')} ${names || c.dim('no language server for this diff')}`);
@@ -468,11 +475,8 @@ async function connectGithub(): Promise<ConnectedGithub> {
 
 /**
  * The pool reads new-side text through the session, so the snapshot allowlist applies to
- * every LSP path. Each snapshot decides which languages run: it re-opens the diff's files
- * in the server for their language, so references in them are found from the reviewed text
- * (see LspPool.track). Nothing starts when the new side is not the checkout: the client
- * refuses symbol navigation there, and a server would otherwise see text that contradicts
- * the disk it indexes.
+ * every LSP path. Each snapshot decides which languages run and which files the servers
+ * hold open (see LspPool.track).
  */
 function startLsp(
   repo: GitRepo,
@@ -481,12 +485,7 @@ function startLsp(
   overrides: Partial<Record<LanguageId, string>>,
   preload: LanguageId[],
 ): LspPool {
-  session.onSnapshot((snap) => {
-    const paths = followsCheckout(snap)
-      ? snap.changed.filter((f) => f.status !== 'D' && !f.binary).map((f) => f.path)
-      : [];
-    void lsp.track(paths);
-  });
+  session.onSnapshot((snap) => void lsp.track(snap));
   // Progress repeats the full status; print each changed warning or error once.
   const reported = new Map<string, string>();
   const lsp = new LspPool({

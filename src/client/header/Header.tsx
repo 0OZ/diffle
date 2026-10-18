@@ -20,7 +20,8 @@ import {
   Sun,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import type { LspServerStatus, LspStatus } from '../../shared/protocol.js';
+import type { LspLogEntry, LspServerStatus, LspStatus } from '../../shared/protocol.js';
+import { languagesLabel } from '../../shared/lsp.js';
 import { repoName } from '../model.js';
 import { copyText } from '../clipboard.js';
 import { useStore } from '../store.js';
@@ -146,7 +147,7 @@ function LspIndicator({ lsp }: { lsp: LspStatus }) {
   const broken = lsp.servers.some((s) => s.state === 'unavailable');
   const error = lsp.servers.some((s) => s.notice?.severity === 'error');
   const warning = lsp.servers.some((s) => s.notice?.severity === 'warning');
-  const logs = lsp.servers.some((s) => s.stderr);
+  const logs = lsp.servers.some((s) => s.log.seq > 0);
   const label =
     (broken && 'unavailable') ||
     (error && 'error') ||
@@ -191,11 +192,13 @@ function LspIndicator({ lsp }: { lsp: LspStatus }) {
           <div
             className="mt-1.5 flex items-center gap-2 border-t border-border pt-1.5 text-muted"
             key={m.language}
-            title={m.tried.join(', ')}
+            title={m.why ?? m.tried.join(', ')}
           >
             <X size="0.875rem" className="shrink-0" />
             <span className="min-w-0 flex-1 font-medium wrap-anywhere text-foreground">{m.language}</span>
-            <span className="shrink-0 text-[0.6875rem]">{m.tried.length ? 'Not on PATH' : 'Disabled'}</span>
+            <span className="shrink-0 text-[0.6875rem]">
+              {m.why ? 'Incomplete' : m.tried.length ? 'Not on PATH' : 'Disabled'}
+            </span>
           </div>
         ))}
       </section>
@@ -204,6 +207,7 @@ function LspIndicator({ lsp }: { lsp: LspStatus }) {
 }
 
 function ServerStatus({ server: s }: { server: LspServerStatus }) {
+  const [open, setOpen] = useState(false);
   const busy = s.state === 'starting' || !!s.activity?.length;
   const problem = s.state === 'unavailable' || !!s.notice;
   const label =
@@ -226,7 +230,7 @@ function ServerStatus({ server: s }: { server: LspServerStatus }) {
           {label}
         </span>
       </div>
-      <div className="mt-0.5 mb-0.5 ml-5.5 text-[0.6875rem] text-muted">{s.languages.join(', ')}</div>
+      <div className="mt-0.5 mb-0.5 ml-5.5 text-[0.6875rem] text-muted">{languagesLabel(s)}</div>
       {s.activity?.map((activity, i) => (
         <p className="my-1.5 ml-5.5 wrap-anywhere" key={i}>
           {activity}
@@ -234,31 +238,58 @@ function ServerStatus({ server: s }: { server: LspServerStatus }) {
       ))}
       {s.message && <p className="my-1.5 ml-5.5 wrap-anywhere text-warn">{s.message}</p>}
       {s.notice && <p className="my-1.5 ml-5.5 wrap-anywhere text-warn">{s.notice.message}</p>}
-      <details className="ml-5.5 text-[0.6875rem] text-muted">
+      <details className="ml-5.5 text-[0.6875rem] text-muted" onToggle={(e) => setOpen(e.currentTarget.open)}>
         <summary className="cursor-pointer">Details</summary>
         <pre className="my-2 font-mono wrap-anywhere whitespace-pre-wrap">{s.command}</pre>
-        {s.stderr && <StderrLog text={s.stderr} />}
+        <ServerLog server={s} shown={open} />
       </details>
     </div>
   );
 }
 
-function StderrLog({ text }: { text: string }) {
+/** A log line as the copy button writes it. */
+function logLine(e: LspLogEntry): string {
+  return `${e.level.padEnd(7)} ${e.source.padEnd(7)} ${e.message}${e.count > 1 ? ` ×${e.count}` : ''}`;
+}
+
+/**
+ * The server's output channel: shown messages, log messages and stderr, fetched while
+ * `shown` and again whenever the status says the log moved.
+ */
+function ServerLog({ server: s, shown }: { server: LspServerStatus; shown: boolean }) {
+  const entries = useStore((st) => st.lspLogs[s.command]?.entries);
+  const watch = useStore((st) => st.watchLspLog);
+  // Follows the diff's wrap setting: unwrapped, a stack trace scrolls sideways like a long line does.
+  const lineWrap = useStore((st) => st.config.lineWrap);
+  useEffect(() => {
+    if (!shown) return;
+    void watch(s.command, true);
+    return () => void watch(s.command, false);
+  }, [shown, s.command, watch]);
   const [result, setResult] = useState<'copied' | 'failed' | null>(null);
   useEffect(() => {
     if (!result) return;
     const timer = setTimeout(() => setResult(null), 3000);
     return () => clearTimeout(timer);
   }, [result]);
+  const { errors, warnings } = s.log;
+  const counts = [
+    errors && `${errors} error${errors === 1 ? '' : 's'}`,
+    warnings && `${warnings} warning${warnings === 1 ? '' : 's'}`,
+  ]
+    .filter(Boolean)
+    .join(', ');
+  if (!entries) return null;
+  // One framed card, as code cards sit on the canvas: the header names it, and the lines scroll under it.
   return (
-    <div className="my-2">
-      <div className="flex items-center justify-between py-1">
-        <span>stderr</span>
+    <div className="my-2 overflow-hidden rounded-md border border-border bg-card">
+      <div className="flex items-center justify-between gap-2 border-b border-border py-0.5 pr-1 pl-2">
+        <span>Log{counts ? ` (${counts})` : ''}</span>
         <Button
           variant="ghost"
           type="button"
-          aria-label="Copy stderr"
-          onClick={async () => setResult((await copyText(text)) ? 'copied' : 'failed')}
+          aria-label="Copy log"
+          onClick={async () => setResult((await copyText(entries.map(logLine).join('\n'))) ? 'copied' : 'failed')}
         >
           {result === 'copied' ? <Check size="0.75rem" /> : <Copy size="0.75rem" />}
           <span aria-live="polite">{result === 'copied' ? 'Copied' : 'Copy'}</span>
@@ -269,13 +300,20 @@ function StderrLog({ text }: { text: string }) {
           Copy failed. Select the log and press Ctrl/⌘+C.
         </p>
       )}
-      <pre
-        aria-label="stderr log"
+      <ol
+        aria-label="server log"
         tabIndex={0}
-        className="m-0 max-h-[min(12rem,25vh)] overflow-auto overscroll-contain p-2 font-mono whitespace-pre text-foreground"
+        className="m-0 max-h-[min(12rem,25vh)] list-none overflow-auto overscroll-contain p-2 font-mono text-foreground"
       >
-        {text}
-      </pre>
+        {entries.length === 0 && <li className="text-muted">Nothing logged yet</li>}
+        {entries.map((e) => (
+          <li key={e.id} className={lineWrap ? 'wrap-anywhere whitespace-pre-wrap' : 'whitespace-pre'}>
+            <span className={e.level === 'error' || e.level === 'warning' ? 'text-warn' : 'text-muted'}>{e.level}</span>{' '}
+            <span className="text-muted">{e.source}</span> {e.message}
+            {e.count > 1 && <span className="text-muted"> ×{e.count}</span>}
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

@@ -3,6 +3,7 @@ import type {
   GithubMetadata,
   ChangedFile,
   CommentThread,
+  LspLogResponse,
   LspServerStatus,
   LspStatus,
   Moved,
@@ -14,9 +15,30 @@ import type {
 /** One python server in `state`; LSP_OFF is a run started with --no-lsp. */
 const lspStatus = (state: LspServerStatus['state'], extra: Partial<LspServerStatus> = {}): LspStatus => ({
   enabled: true,
-  servers: [{ name: 'pyrefly', command: 'pyrefly lsp', state, languages: ['python'], ...extra }],
+  servers: [
+    {
+      name: 'pyrefly',
+      command: 'pyrefly lsp',
+      state,
+      languages: ['python'],
+      joins: [],
+      supports: [
+        'definition',
+        'typeDefinition',
+        'hover',
+        'references',
+        'documentSymbol',
+        'workspaceSymbol',
+        'semanticTokens',
+        'documentHighlight',
+      ],
+      log: NO_LOG,
+      ...extra,
+    },
+  ],
   missing: [],
 });
+const NO_LOG = { seq: 0, errors: 0, warnings: 0 };
 const LSP_OFF: LspStatus = { enabled: false, servers: [], missing: [] };
 
 type Deferred<T> = { promise: Promise<T>; resolve: (v: T) => void; reject: (e: unknown) => void };
@@ -43,6 +65,7 @@ const api = {
     lspCommands: { python: 'pyrefly lsp' },
   })),
   lspStatus: vi.fn(async (): Promise<LspStatus> => LSP_OFF),
+  lspLog: vi.fn(async (): Promise<LspLogResponse> => ({ entries: [] })),
   moved: vi.fn(async (): Promise<Moved | null> => null),
   lspDefinition: vi.fn(),
   lspTypeDefinition: vi.fn(),
@@ -971,15 +994,68 @@ describe('mode picker', () => {
   });
 });
 
+describe('language server log', () => {
+  const withLog = (seq: number) => lspStatus('ready', { log: { seq, errors: 0, warnings: 0 } });
+  const entry = { id: 1, time: 0, source: 'stderr' as const, level: 'log' as const, message: 'open a.py v1', count: 1 };
+
+  it('fetches a shown log, again when the status says it moved, and forgets it when hidden', async () => {
+    useStore.setState({ lsp: withLog(1), lspLogs: {} });
+    const before = api.lspLog.mock.calls.length;
+    api.lspLog.mockResolvedValueOnce({ entries: [entry] });
+    await useStore.getState().watchLspLog('pyrefly lsp', true);
+    expect(api.lspLog).toHaveBeenLastCalledWith('pyrefly lsp');
+    expect(useStore.getState().lspLogs['pyrefly lsp']).toEqual({ seq: 1, entries: [entry] });
+    // The same seq again says nothing moved.
+    useStore.getState().setLspStatus(withLog(1));
+    expect(api.lspLog.mock.calls.length).toBe(before + 1);
+    const more = [entry, { ...entry, id: 2, message: 'close a.py' }];
+    api.lspLog.mockResolvedValueOnce({ entries: more });
+    useStore.getState().setLspStatus(withLog(2));
+    await vi.waitFor(() => expect(useStore.getState().lspLogs['pyrefly lsp']).toEqual({ seq: 2, entries: more }));
+    await useStore.getState().watchLspLog('pyrefly lsp', false);
+    expect(useStore.getState().lspLogs).toEqual({});
+    useStore.getState().setLspStatus(withLog(3));
+    expect(api.lspLog.mock.calls.length).toBe(before + 2);
+  });
+
+  it('fetches one log at a time, and once more when the status outran the fetch', async () => {
+    useStore.setState({ lsp: withLog(1), lspLogs: {} });
+    const before = api.lspLog.mock.calls.length;
+    const slow = deferred<{ entries: (typeof entry)[] }>();
+    api.lspLog.mockReturnValueOnce(slow.promise);
+    const shown = useStore.getState().watchLspLog('pyrefly lsp', true);
+    useStore.getState().setLspStatus(withLog(2));
+    useStore.getState().setLspStatus(withLog(3));
+    expect(api.lspLog.mock.calls.length).toBe(before + 1);
+    const more = [entry, { ...entry, id: 2, message: 'close a.py' }];
+    api.lspLog.mockResolvedValueOnce({ entries: more });
+    slow.resolve({ entries: [entry] });
+    await shown;
+    await vi.waitFor(() => expect(useStore.getState().lspLogs['pyrefly lsp']).toEqual({ seq: 3, entries: more }));
+    expect(api.lspLog.mock.calls.length).toBe(before + 2);
+  });
+
+  it('lets a hide during the fetch win', async () => {
+    useStore.setState({ lsp: withLog(1), lspLogs: {} });
+    const slow = deferred<{ entries: (typeof entry)[] }>();
+    api.lspLog.mockReturnValueOnce(slow.promise);
+    const shown = useStore.getState().watchLspLog('pyrefly lsp', true);
+    await useStore.getState().watchLspLog('pyrefly lsp', false);
+    slow.resolve({ entries: [entry] });
+    await shown;
+    expect(useStore.getState().lspLogs).toEqual({});
+  });
+});
+
 describe('symbol navigation', () => {
   it.each(['json', 'jsonc', 'yaml', 'toml'] as const)(
-    '%s keeps hover but does not offer symbol navigation',
+    '%s keeps hover but does not offer symbol navigation when its server offers none',
     async (language) => {
       const path = `config.${language}`;
       const target = { path, side: 'new' as const, line: 1, col: 2, text: 'name' };
       useStore.setState({
         snapshot: snap(1, 'working', [path]),
-        lsp: lspStatus('ready', { languages: [language] }),
+        lsp: lspStatus('ready', { languages: [language], supports: ['hover', 'documentSymbol'] }),
         symbolMenu: null,
         hover: null,
       });
@@ -1067,6 +1143,36 @@ describe('symbol navigation', () => {
     api.lspHover.mockResolvedValueOnce({ contents: 'Referenced symbol' });
     await useStore.getState().requestHover(comment, anchor);
     expect(useStore.getState().hover).toEqual({ target: comment, contents: 'Referenced symbol', anchor });
+  });
+
+  it('asks for a hover inside prose anyway when a server joins the language', async () => {
+    ready();
+    const joiner = {
+      ...lspStatus('ready').servers[0]!,
+      name: 'tailwind',
+      command: 'tailwind',
+      languages: [],
+      joins: ['python' as const],
+    };
+    useStore.setState({
+      symbolMenu: null,
+      hover: null,
+      lsp: { enabled: true, servers: [...lspStatus('ready').servers, joiner], missing: [] },
+    });
+    blocksSymbol.mockResolvedValue(true);
+    api.lspHover.mockResolvedValue({ contents: '.foo { margin: 0 }' });
+    const anchor = { left: 0, top: 0, bottom: 0 };
+    await useStore.getState().requestHover(target, anchor);
+    expect(blocksSymbol).not.toHaveBeenCalled();
+    expect(useStore.getState().hover).toEqual({ target, contents: '.foo { margin: 0 }', anchor });
+    // A joining server still starting is no reason to skip the gate.
+    useStore.setState({
+      hover: null,
+      lsp: { enabled: true, servers: [...lspStatus('ready').servers, { ...joiner, state: 'starting' }], missing: [] },
+    });
+    await useStore.getState().requestHover(target, anchor);
+    expect(blocksSymbol).toHaveBeenCalledTimes(1);
+    expect(useStore.getState().hover).toBeNull();
   });
 
   it('suppresses hover and menus on syntax-classified prose, including the old side', async () => {
@@ -1503,7 +1609,7 @@ describe('symbol navigation', () => {
     vi.useFakeTimers();
     try {
       const sym = { name: 'foo', kind: 12, path: 'a.py', line: 1, endLine: 1, col: 0 };
-      api.lspSymbols.mockResolvedValue([sym]);
+      api.lspSymbols.mockResolvedValue({ symbols: [sym] });
       useStore.setState({
         symbols: {
           open: true,

@@ -2,9 +2,11 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { LspBridge, LspUnavailableError } from '../../src/server/lsp/LspBridge.js';
-import { type LspProcessStatus } from '../../src/shared/protocol.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { LspSettings } from '../../src/server/lsp/configuration.js';
+import { LspBridge } from '../../src/server/lsp/LspBridge.js';
+import { LspUnavailableError } from '../../src/server/lsp/LspProcess.js';
+import type { LspFeature, LspProcessStatus } from '../../src/shared/protocol.js';
 
 const ROOT = '/repo';
 const FAKE = join(import.meta.dirname, 'fake-lsp.mjs');
@@ -17,14 +19,21 @@ const files: Record<string, string> = {
   'z.py': 'z\n',
 };
 
-function start(env: Record<string, string> = {}, root = ROOT, maxOpen?: number) {
+function start(
+  env: Record<string, string> = {},
+  root = ROOT,
+  maxOpen?: number,
+  initializationOptions?: LspSettings,
+  assumes?: LspFeature[],
+) {
   let notify: (method: string, params: unknown) => void;
+  let request: (method: string, params: unknown) => void;
   const statuses: LspProcessStatus[] = [];
   /** Document events the fake server logged: `open a.py v1`, `change a.py v2`, `close a.py`. */
   const events: string[] = [];
   /** Paths `read` was asked for. */
   const reads: string[] = [];
-  const bridge = LspBridge.start({
+  const bridge = new LspBridge({
     command: 'fake',
     root,
     read: async (p) => {
@@ -34,19 +43,23 @@ function start(env: Record<string, string> = {}, root = ROOT, maxOpen?: number) 
     },
     has: async (p) => p in files,
     maxOpen,
+    initializationOptions,
+    assumes,
     onStatus: (s) => statuses.push(s),
     spawnProcess: () => {
       const child = spawn(process.execPath, [FAKE], {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...process.env, FAKE_LSP_ROOT: root, ...env },
       });
-      notify = (method, params) => {
+      const tell = (kind: string, method: string, params: unknown) => {
         const body = Buffer.from(
-          JSON.stringify({ jsonrpc: '2.0', method: 'test/notification', params: { method, params } }),
+          JSON.stringify({ jsonrpc: '2.0', method: `test/${kind}`, params: { method, params } }),
         );
         child.stdin.write(`Content-Length: ${body.length}\r\n\r\n`);
         child.stdin.write(body);
       };
+      notify = (method, params) => tell('notification', method, params);
+      request = (method, params) => tell('request', method, params);
       child.stderr.on('data', (d: Buffer) => events.push(...d.toString().split('\n').filter(Boolean)));
       return child;
     },
@@ -57,6 +70,7 @@ function start(env: Record<string, string> = {}, root = ROOT, maxOpen?: number) 
     events,
     reads,
     notify: (method: string, params: unknown) => notify(method, params),
+    request: (method: string, params: unknown) => request(method, params),
   };
 }
 
@@ -127,9 +141,14 @@ describe('LspBridge', () => {
     expect(await bridge.tokenKind({ path: 'a.py', line: 1, col: 6 })).toEqual({ kind: null });
     expect(await bridge.tokenKind({ path: 'a.py', line: 3, col: 4 })).toEqual({ kind: 'keyword' });
     await bridge.close();
-    const plain = start({ FAKE_LSP_NO_TOKENS: '1' });
+    const plain = start({ FAKE_LSP_WITHOUT: 'semanticTokens' });
     expect(await plain.bridge.tokenKind({ path: 'a.py', line: 1, col: 0 })).toEqual({ kind: null });
     await plain.bridge.close();
+    // A server known to answer without advertising (pyrefly) is asked as if it had.
+    const assumed = start({ FAKE_LSP_WITHOUT: 'semanticTokens' }, ROOT, undefined, undefined, ['semanticTokens']);
+    expect(await assumed.bridge.tokenKind({ path: 'a.py', line: 1, col: 0 })).toEqual({ kind: 'keyword' });
+    expect(assumed.bridge.features()).toContain('semanticTokens');
+    await assumed.bridge.close();
   });
 
   it('maps document highlights to new-side occurrences with their kind, and stays quiet without them', async () => {
@@ -147,7 +166,7 @@ describe('LspBridge', () => {
     expect(await bridge.occurrences({ path: 'other.py', line: 3, col: 5 })).toEqual({ occurrences: [] });
 
     await bridge.close();
-    const plain = start({ FAKE_LSP_NO_HIGHLIGHT: '1' });
+    const plain = start({ FAKE_LSP_WITHOUT: 'documentHighlight' });
     expect(await plain.bridge.occurrences({ path: 'other.py', line: 3, col: 0 })).toEqual({ occurrences: [] });
     expect(plain.bridge.status().state).toBe('ready');
     await plain.bridge.close();
@@ -202,14 +221,16 @@ describe('LspBridge', () => {
 
   it('flattens hierarchical document symbols and filters workspace symbols to the snapshot', async () => {
     const { bridge } = start();
-    expect(await bridge.documentSymbols('a.py')).toEqual([
-      { name: 'Foo', kind: 5, container: undefined, path: 'a.py', line: 1, endLine: 4, col: 6 },
-      { name: 'bar', kind: 6, container: 'Foo', path: 'a.py', line: 2, endLine: 3, col: 8 },
-      { name: 'baz', kind: 12, container: undefined, path: 'a.py', line: 6, endLine: 7, col: 4 },
-    ]);
-    expect(await bridge.workspaceSymbols('q')).toEqual([
-      { name: 'q_sym', kind: 12, container: 'mod', path: 'other.py', line: 5, endLine: 5, col: 2 },
-    ]);
+    expect(await bridge.documentSymbols('a.py')).toEqual({
+      symbols: [
+        { name: 'Foo', kind: 5, container: undefined, path: 'a.py', line: 1, endLine: 4, col: 6 },
+        { name: 'bar', kind: 6, container: 'Foo', path: 'a.py', line: 2, endLine: 3, col: 8 },
+        { name: 'baz', kind: 12, container: undefined, path: 'a.py', line: 6, endLine: 7, col: 4 },
+      ],
+    });
+    expect(await bridge.workspaceSymbols('q')).toEqual({
+      symbols: [{ name: 'q_sym', kind: 12, container: 'mod', path: 'other.py', line: 5, endLine: 5, col: 2 }],
+    });
     await bridge.close();
   });
 
@@ -281,7 +302,7 @@ describe('LspBridge', () => {
       notify('$/progress', { token: 2, value: { kind: 'begin', title: 'Indexing' } });
       await expect.poll(() => bridge.status().activity?.length).toBe(2);
       expect((await bridge.definition(pos)).locations).toHaveLength(1);
-      await expect(bridge.hover({ ...pos, line: 1 })).rejects.toThrow('Loading workspace');
+      expect((await bridge.hover({ ...pos, line: 1 })).inconclusive).toContain('Loading workspace');
       expect((await bridge.references(pos)).locations.length).toBeGreaterThan(0);
       await bridge.track(['a.py', 'other.py']);
       await settle();
@@ -290,7 +311,7 @@ describe('LspBridge', () => {
       notify('$/progress', { token: 'load', value: { kind: 'end' } });
       notify('$/progress', { token: 2, value: { kind: 'report', message: 'dependencies', percentage: 40 } });
       await expect.poll(() => bridge.status().activity).toEqual(['Indexing (40%): dependencies']);
-      await expect(bridge.hover({ ...pos, line: 1 })).rejects.toThrow('Indexing (40%): dependencies');
+      expect((await bridge.hover({ ...pos, line: 1 })).inconclusive).toContain('Indexing (40%): dependencies');
       notify('$/progress', { token: 2, value: { kind: 'end' } });
       await expect.poll(() => bridge.status().activity).toEqual([]);
       expect(await bridge.hover({ ...pos, line: 1 })).toEqual({ contents: null });
@@ -300,8 +321,8 @@ describe('LspBridge', () => {
     }
   });
 
-  it.each(['window/showMessage', 'window/logMessage', 'window/showMessageRequest'])(
-    'surfaces %s errors without killing a usable server',
+  it.each(['window/showMessage', 'window/showMessageRequest'])(
+    'keeps a %s error as the notice without killing a usable server',
     async (method) => {
       const { bridge, notify } = start();
       try {
@@ -311,9 +332,8 @@ describe('LspBridge', () => {
           .poll(() => bridge.status().notice)
           .toEqual({ severity: 'error', message: 'Failed to load workspace' });
         expect((await bridge.definition({ path: 'a.py', line: 3, col: 4 })).locations).toHaveLength(1);
-        await expect(bridge.hover({ path: 'a.py', line: 1, col: 0 })).rejects.toThrow(
-          'last server error: Failed to load workspace',
-        );
+        // An empty answer is an answer: the notice does not explain it away.
+        expect(await bridge.hover({ path: 'a.py', line: 1, col: 0 })).toEqual({ contents: null });
         notify(method, { type: 3, message: 'An unrelated info message' });
         notify('$/progress', { token: 2, value: [1, 2, 3] });
         await settle();
@@ -325,21 +345,67 @@ describe('LspBridge', () => {
     },
   );
 
-  it('rejects an empty answer when standard progress begins during the request', async () => {
-    const { bridge } = start({ FAKE_LSP_LOADING_DURING_QUERY: '1' });
+  it('files shown messages, log messages and stderr in one log, and lets only shown problems stand as the notice', async () => {
+    const { bridge, notify } = start();
     try {
-      await expect(bridge.definition({ path: 'a.py', line: 3, col: 4 })).rejects.toThrow('Reloading workspace');
+      await bridge.track(['a.py']);
+      notify('window/logMessage', { type: 2, message: 'languageId not found for x.mmd' });
+      notify('window/logMessage', { type: 2, message: 'languageId not found for x.mmd' });
+      notify('window/logMessage', { type: 1, message: 'Unhandled exception' });
+      notify('window/showMessage', { type: 3, message: 'Indexing done' });
+      notify('window/showMessage', { type: 2, message: 'Could not find Astro' });
+      await expect.poll(() => bridge.status().notice).toEqual({ severity: 'warning', message: 'Could not find Astro' });
+      // Log messages never become the notice, and a warning in the log is no reason to doubt an empty answer.
+      expect(await bridge.hover({ path: 'a.py', line: 1, col: 0 })).toEqual({ contents: null });
+      const entries = bridge.entries();
+      expect(entries.map((e) => [e.source, e.level, e.message, e.count])).toEqual([
+        ['stderr', 'log', 'open a.py v1', 1],
+        ['log', 'warning', 'languageId not found for x.mmd', 2],
+        ['log', 'error', 'Unhandled exception', 1],
+        ['message', 'info', 'Indexing done', 1],
+        ['message', 'warning', 'Could not find Astro', 1],
+      ]);
+      expect(entries.map((e) => e.id)).toEqual([1, 2, 3, 4, 5]);
+      // Two warnings from the repeated line count once each, so the summary says how chatty the server is.
+      expect(bridge.status().log).toEqual({ seq: 6, errors: 1, warnings: 3 });
+      // The lines travel only on request; the status carries the summary.
+      expect(bridge.status()).not.toHaveProperty('stderr');
     } finally {
       await bridge.close();
     }
   });
 
-  it('exposes stderr while the server remains alive', async () => {
+  it('marks an empty answer inconclusive when standard progress begins during the request', async () => {
+    const { bridge } = start({ FAKE_LSP_LOADING_DURING_QUERY: '1' });
+    try {
+      expect(await bridge.definition({ path: 'a.py', line: 3, col: 4 })).toEqual({
+        locations: [],
+        inconclusive: expect.stringContaining('Reloading workspace'),
+      });
+    } finally {
+      await bridge.close();
+    }
+  });
+
+  it('hands initializationOptions to the server with initialize', async () => {
+    const plugins = [{ name: '@vue/typescript-plugin', location: '/opt/vue', languages: ['vue'] }];
+    const { bridge, events } = start({}, ROOT, undefined, { plugins });
+    try {
+      await bridge.track(['a.py']);
+      await expect.poll(() => events).toContain(`init ${JSON.stringify({ plugins })}`);
+    } finally {
+      await bridge.close();
+    }
+  });
+
+  it('logs stderr by whole line while the server remains alive', async () => {
     const { bridge } = start();
     try {
       await bridge.track(['a.py']);
-      await expect.poll(() => bridge.status().stderr).toContain('open a.py');
+      await expect.poll(() => bridge.entries().map((e) => e.message)).toContain('open a.py v1');
+      expect(bridge.entries().every((e) => e.source === 'stderr' && e.level === 'log')).toBe(true);
       expect(bridge.status().state).toBe('ready');
+      expect(bridge.status().log.seq).toBeGreaterThan(0);
     } finally {
       await bridge.close();
     }
@@ -359,6 +425,43 @@ describe('LspBridge', () => {
     expect(many.events.filter((e) => e.startsWith('refused'))).toHaveLength(3);
     expect(many.bridge.status().state).toBe('ready');
     await many.bridge.close();
+  });
+
+  it('asks only for what the server advertised, and says so for the rest', async () => {
+    const { bridge } = start({ FAKE_LSP_OFFERS: 'hover,documentSymbol' });
+    try {
+      expect(bridge.features()).toEqual([]);
+      expect((await bridge.hover({ path: 'a.py', line: 2, col: 4 })).contents).toContain('def f()');
+      expect(bridge.features()).toEqual(['hover', 'documentSymbol']);
+      await expect(bridge.definition({ path: 'a.py', line: 3, col: 4 })).rejects.toThrow(
+        new LspUnavailableError('fake offers no go to definition'),
+      );
+      await expect(bridge.references({ path: 'a.py', line: 3, col: 4 })).rejects.toThrow(/offers no references/);
+      await expect(bridge.workspaceSymbols('q')).rejects.toThrow(/offers no workspace symbols/);
+      // Token kinds and occurrences are advisory: not offered means no opinion, never an error.
+      expect(await bridge.tokenKind({ path: 'a.py', line: 1, col: 0 })).toEqual({ kind: null });
+      expect(await bridge.occurrences({ path: 'a.py', line: 1, col: 0 })).toEqual({ occurrences: [] });
+    } finally {
+      await bridge.close();
+    }
+  });
+
+  it('takes a feature the server registers after initialize, legend included, until it unregisters', async () => {
+    const { bridge, request } = start({ FAKE_LSP_REGISTERS: 'semanticTokens,references' });
+    try {
+      expect((await bridge.hover({ path: 'a.py', line: 2, col: 4 })).contents).toContain('def f()');
+      await vi.waitFor(() => expect(bridge.features()).toContain('semanticTokens'));
+      expect(bridge.features()).toContain('references');
+      // The fake's legend names type 15 `t15`; the default numbering would say `keyword`.
+      expect(await bridge.tokenKind({ path: 'a.py', line: 1, col: 0 })).toEqual({ kind: 't15' });
+      expect((await bridge.references({ path: 'a.py', line: 1, col: 0 })).locations.length).toBeGreaterThan(0);
+      request('client/unregisterCapability', { unregisterations: [{ id: 'reg-semanticTokens', method: 'x' }] });
+      await vi.waitFor(() => expect(bridge.features()).not.toContain('semanticTokens'));
+      expect(await bridge.tokenKind({ path: 'a.py', line: 1, col: 0 })).toEqual({ kind: null });
+      expect(bridge.features()).toContain('references');
+    } finally {
+      await bridge.close();
+    }
   });
 
   it('reports unavailable when the server dies during initialize', async () => {

@@ -1,5 +1,5 @@
-import { accessSync, constants, statSync } from 'node:fs';
-import { delimiter, isAbsolute, join, resolve } from 'node:path';
+import { accessSync, constants, readFileSync, realpathSync, statSync } from 'node:fs';
+import { basename, delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 
 /**
  * The program a shell command line runs: its first word, unquoted. Only ever asked
@@ -15,6 +15,15 @@ export function argv0(command: string): string {
     return end === -1 ? s.slice(1) : s.slice(1, end);
   }
   return s.split(/\s/, 1)[0] ?? '';
+}
+
+/**
+ * The program a command line runs, as status lines and the registry name it: the basename
+ * of its first word without a Windows extension. `"C:\\tools\\taplo.exe" lsp stdio` → `taplo`.
+ */
+export function programOf(command: string): string {
+  const prog = argv0(command);
+  return (prog.split(/[\\/]/).pop() || prog).replace(/\.(exe|cmd|bat)$/i, '');
 }
 
 /**
@@ -55,5 +64,28 @@ function runnable(file: string): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * The file `executable` finally runs, as far as the filesystem tells: a pixi global
+ * trampoline is replaced by the program its configuration names (the binary on PATH
+ * is a launcher, with `trampoline_configuration/<name>.json` beside it pointing into
+ * the environment), then symlinks are resolved. A path that leads nowhere is returned
+ * as is.
+ */
+export function realExecutable(executable: string): string {
+  let target = executable;
+  try {
+    const config = join(dirname(executable), 'trampoline_configuration', `${basename(executable)}.json`);
+    const { exe } = JSON.parse(readFileSync(config, 'utf8')) as { exe?: unknown };
+    if (typeof exe === 'string' && exe) target = exe;
+  } catch {
+    /* Not a trampoline. */
+  }
+  try {
+    return realpathSync(target);
+  } catch {
+    return target;
   }
 }

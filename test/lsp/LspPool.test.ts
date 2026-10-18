@@ -1,9 +1,16 @@
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { LspUnavailableError } from '../../src/server/lsp/LspBridge.js';
+import { LspUnavailableError } from '../../src/server/lsp/LspProcess.js';
 import { LspPool, type LspPoolOptions } from '../../src/server/lsp/LspPool.js';
 import type { LanguageId, LspStatus } from '../../src/shared/protocol.js';
+
+/** A worktree snapshot changing `paths`. */
+const diff = (...paths: string[]) => ({
+  newSha: 'worktree',
+  headSha: '',
+  changed: paths.map((path) => ({ path, status: 'M' as const, binary: false })),
+});
 
 const ROOT = '/repo';
 const FAKE = join(import.meta.dirname, 'fake-lsp.mjs');
@@ -14,6 +21,8 @@ const files: Record<string, string> = {
   'c.txt': 'plain\n',
   'x.c': 'int main(void) { return 0; }\n',
   'y.cpp': 'int main() { return 0; }\n',
+  'a.tsx': 'const f = 1;\nf;\nf;\n\nexport {};\n',
+  'b.js': 'f();\nf();\n',
 };
 
 interface Started {
@@ -62,7 +71,7 @@ describe('LspPool', () => {
   it('starts a server per language in the diff and opens each file in its own', async () => {
     const { pool, events } = start({ python: 'py-server', go: 'go-server' });
     expect(events.size).toBe(0);
-    await pool.track(['a.py', 'b.go', 'c.txt']);
+    await pool.track(diff('a.py', 'b.go', 'c.txt'));
     await settle();
     expect(events.get('py-server')).toEqual(['open a.py v1']);
     expect(events.get('go-server')).toEqual(['open b.go v1']);
@@ -77,26 +86,39 @@ describe('LspPool', () => {
     });
   });
 
-  it('routes by extension and says what is missing for a path it cannot serve', async () => {
+  it('routes by extension and refuses a path it cannot serve', async () => {
     const { pool } = start({ python: 'py-server', rust: '' });
-    await pool.track(['a.py', 'main.rs', 'main.go']);
-    await expect(pool.definition({ path: 'c.txt', line: 1, col: 0 })).rejects.toThrow(
-      /No language server for \.txt files/,
-    );
+    await pool.track(diff('a.py', 'main.rs', 'main.go'));
+    // The route words why through lspBlocker before asking; the pool only refuses.
+    await expect(pool.definition({ path: 'c.txt', line: 1, col: 0 })).rejects.toThrow(LspUnavailableError);
     await expect(pool.definition({ path: 'b.go', line: 1, col: 0 })).rejects.toThrow(LspUnavailableError);
-    // Asked for go, it names the programs to install; rust is off by config, so nothing to install.
-    await expect(pool.documentSymbols('main.rs')).rejects.toThrow(/off in your diffle config/);
-    await expect(pool.documentSymbols('main.go')).rejects.toThrow(/install one of gopls/);
+    await expect(pool.documentSymbols('main.rs')).rejects.toThrow(LspUnavailableError);
+    await expect(pool.documentSymbols('main.go')).rejects.toThrow(/no language server for main\.go/);
   });
 
   it('reports every server and every unserved language as one status', async () => {
     const { pool, statuses } = start({ python: 'py-server', rust: '' });
-    await pool.track(['a.py', 'main.rs', 'b.go']);
+    await pool.track(diff('a.py', 'main.rs', 'b.go'));
     await settle();
     const status = pool.status();
     expect(status.enabled).toBe(true);
     expect(status.servers).toMatchObject([
-      { name: 'py-server', command: 'py-server', state: 'ready', languages: ['python'] },
+      {
+        name: 'py-server',
+        command: 'py-server',
+        state: 'ready',
+        languages: ['python'],
+        supports: [
+          'definition',
+          'typeDefinition',
+          'hover',
+          'references',
+          'documentSymbol',
+          'workspaceSymbol',
+          'semanticTokens',
+          'documentHighlight',
+        ],
+      },
     ]);
     expect(status.missing).toEqual([
       { language: 'go', tried: ['gopls'] },
@@ -109,8 +131,8 @@ describe('LspPool', () => {
 
   it('hands a language that arrives later to the process already running its command', async () => {
     const { pool, events } = start({ c: 'clangd-ish', cpp: 'clangd-ish' });
-    await pool.track(['x.c']);
-    await pool.track(['x.c', 'y.cpp']);
+    await pool.track(diff('x.c'));
+    await pool.track(diff('x.c', 'y.cpp'));
     await settle();
     expect([...events.keys()]).toEqual(['clangd-ish']);
     expect(events.get('clangd-ish')?.sort()).toEqual(['open x.c v1', 'open y.cpp v1']);
@@ -121,11 +143,11 @@ describe('LspPool', () => {
 
   it('asks every server for workspace symbols and keeps a server whose language left the diff', async () => {
     const { pool, events } = start({ python: 'py-server', go: 'go-server' });
-    await pool.track(['a.py', 'b.go']);
-    const symbols = await pool.workspaceSymbols('q');
+    await pool.track(diff('a.py', 'b.go'));
+    const { symbols } = await pool.workspaceSymbols('q');
     expect(symbols.map((s) => s.name)).toEqual(['q_sym', 'q_sym']);
     // A refresh that drops go keeps its server up, with nothing open.
-    await pool.track(['a.py']);
+    await pool.track(diff('a.py'));
     await settle();
     expect(pool.status().servers.map((s) => s.name)).toEqual(['go-server', 'py-server']);
     expect(events.get('go-server')).toEqual(['open b.go v1', 'close b.go']);
@@ -138,11 +160,106 @@ describe('LspPool', () => {
     expect(await pool.tokenKind({ path: 'a.py', line: 1, col: 0 })).toEqual({ kind: 'keyword' });
   });
 
+  describe('a server joining languages beside their owner', () => {
+    const TAILWIND = 'tailwindcss-language-server --stdio';
+    /** PATH holds Tailwind alone; the tagged fake stands in for it, and `env` tunes one command's fake. */
+    const overlay = (
+      overrides: Partial<Record<LanguageId, string>>,
+      env: Record<string, Record<string, string>> = {},
+    ) =>
+      start(overrides, {
+        lookup: (c) => (c.startsWith('tailwindcss-language-server') ? '/usr/bin/tailwindcss-language-server' : null),
+        spawnProcess: (command) =>
+          spawn(process.execPath, [FAKE], {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: {
+              ...process.env,
+              FAKE_LSP_ROOT: ROOT,
+              ...(command === TAILWIND ? { FAKE_LSP_TAG: 'tailwind' } : {}),
+              ...env[command],
+            },
+          }),
+      });
+    const ownerHover = {
+      contents: '```python\ndef f() -> None\n```\n\nDoes the `f` thing.',
+      range: { line: 2, col: 4, endLine: 2, endCol: 5 },
+    };
+
+    it('starts for a joined language and merges its hovers and locations after the owner’s', async () => {
+      const { pool } = overlay({ typescriptreact: 'ts-server' });
+      await pool.track(diff('a.tsx'));
+      expect(pool.status().servers).toMatchObject([
+        { command: 'ts-server', languages: ['typescriptreact'], joins: [] },
+        { command: TAILWIND, languages: [], joins: ['typescriptreact'] },
+      ]);
+      expect(await pool.hover({ path: 'a.tsx', line: 2, col: 0 })).toEqual({
+        ...ownerHover,
+        contents: `${ownerHover.contents}\n\n---\n\ntailwind says hi`,
+      });
+      expect((await pool.definition({ path: 'a.tsx', line: 2, col: 0 })).locations).toEqual([
+        { path: 'a.tsx', line: 2, col: 4, text: 'f;' },
+        { path: 'a.tsx', line: 5, col: 0, text: 'export {};' },
+      ]);
+      // Highlights come from the owner alone: the joined fake would double them.
+      expect((await pool.occurrences({ path: 'a.tsx', line: 2, col: 0 })).occurrences).toHaveLength(1);
+      // A language entering the diff later joins the running process, as an owner's would.
+      await pool.track(diff('a.tsx', 'b.js'));
+      expect(pool.status().servers.map((s) => [s.command, s.joins])).toEqual([
+        ['ts-server', []],
+        [TAILWIND, ['typescriptreact', 'javascript']],
+      ]);
+    });
+
+    it('serves a language nothing owns by itself', async () => {
+      const { pool } = overlay({});
+      await pool.track(diff('b.js'));
+      const status = pool.status();
+      expect(status.servers.map((s) => s.command)).toEqual([TAILWIND]);
+      expect(status.missing).toEqual([{ language: 'javascript', tried: ['typescript-language-server', 'vtsls'] }]);
+      expect(await pool.hover({ path: 'b.js', line: 2, col: 0 })).toEqual({ contents: 'tailwind says hi' });
+      expect((await pool.occurrences({ path: 'b.js', line: 2, col: 0 })).occurrences).toHaveLength(1);
+    });
+
+    it('keeps the owner’s answer when the joined server is gone, and the owner’s error when nothing answers', async () => {
+      const { pool } = overlay({ typescriptreact: 'ts-server' }, { [TAILWIND]: { FAKE_LSP_DIE: '1' } });
+      await pool.track(diff('a.tsx'));
+      await expect.poll(() => pool.status().servers[1]?.state).toBe('unavailable');
+      expect(await pool.hover({ path: 'a.tsx', line: 2, col: 0 })).toEqual(ownerHover);
+
+      const dead = overlay({ typescriptreact: 'ts-server' }, { 'ts-server': { FAKE_LSP_DIE: '1' } });
+      await dead.pool.track(diff('a.tsx'));
+      await expect.poll(() => dead.pool.status().servers[0]?.state).toBe('unavailable');
+      expect(await dead.pool.hover({ path: 'a.tsx', line: 2, col: 0 })).toEqual({ contents: 'tailwind says hi' });
+      // Line 1 has no hover anywhere, so the owner's outage is why the answer may be incomplete.
+      expect(await dead.pool.hover({ path: 'a.tsx', line: 1, col: 0 })).toEqual({
+        contents: null,
+        inconclusive: expect.stringContaining('"ts-server" exited'),
+      });
+    });
+  });
+
+  it('tracks nothing when the new side is not the checkout', async () => {
+    const { pool, events } = start({ python: 'py-server' });
+    await pool.track({ ...diff('a.py'), newSha: 'abc123', headSha: 'def456' });
+    await settle();
+    expect(events.size).toBe(0);
+    await pool.track({ ...diff('a.py'), newSha: 'abc123', headSha: 'abc123' });
+    await settle();
+    expect(events.get('py-server')).toEqual(['open a.py v1']);
+  });
+
+  it('hands out one server’s log by command', async () => {
+    const { pool } = start({ python: 'py-server' });
+    await pool.track(diff('a.py'));
+    await expect.poll(() => pool.log('py-server')?.map((e) => e.message)).toContain('open a.py v1');
+    expect(pool.log('go-server')).toBeNull();
+  });
+
   it('has nothing to say once closed', async () => {
     const { pool, statuses } = start({ python: 'py-server' }, { preload: ['python'] });
     await pool.close();
     const seen = statuses.length;
-    await pool.track(['a.py']);
+    await pool.track(diff('a.py'));
     expect(statuses.length).toBe(seen);
     await expect(pool.definition({ path: 'a.py', line: 1, col: 0 })).rejects.toThrow(/shutting down/);
   });
