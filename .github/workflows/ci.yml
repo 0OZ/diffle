@@ -5,6 +5,13 @@ on:
       - main
   pull_request:
 
+# The log is not a terminal, so cargo, clippy, vitest, oxlint and diffle itself would print plain
+# text; these tell each to colour anyway.
+env:
+  CARGO_TERM_COLOR: always
+  CLICOLOR_FORCE: 1
+  FORCE_COLOR: 1
+
 jobs:
   nix:
     runs-on: ubuntu-latest
@@ -33,30 +40,47 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
+      - uses: prefix-dev/setup-pixi@ad1da6449d9e506fd127fd67ab2d054a769f6a94 # v0.11.2
       # The runner's system config converts line endings in every repository the tests create and commit to.
       - name: Disable autocrlf
         if: runner.os == 'Windows'
         run: git config --system core.autocrlf false
-      - name: Test
-        run: |
-          npm ci
-          npm test
+      - run: pixi run test-node
 
-  # Use the same Compose service locally and when regenerating snapshots.
+  rust:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - macos-latest
+          - windows-latest
+          - windows-11-arm
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: prefix-dev/setup-pixi@ad1da6449d9e506fd127fd67ab2d054a769f6a94 # v0.11.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # The runner's system config converts line endings in every repository the tests create and commit to.
+      - name: Disable autocrlf
+        if: runner.os == 'Windows'
+        run: git config --system core.autocrlf false
+      - run: pixi run test-rust
+
+  # The runner and diffle run on the host, the browser in Playwright's container (compose.yml),
+  # here as on every developer machine: the screenshots are the container's.
   e2e:
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-      - name: End-to-end tests
-        run: npm run test:e2e:docker
+      - uses: prefix-dev/setup-pixi@ad1da6449d9e506fd127fd67ab2d054a769f6a94 # v0.11.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: pixi run e2e
       # Expected, actual and diff images plus traces for every failed scenario, and the HTML report.
       - name: Upload failure artifacts
         if: failure()
@@ -70,7 +94,7 @@ jobs:
       # Rewrites the snapshots of the failed scenarios; the Update snapshots workflow commits them.
       - name: Regenerate failed snapshots
         if: failure()
-        run: npm run test:e2e:docker -- --last-failed --update-snapshots
+        run: pixi run e2e --last-failed --update-snapshots
       - name: Collect changed snapshots
         if: failure()
         run: |
@@ -91,15 +115,13 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-      - name: Install
-        run: npm ci
-      - name: Pre-commit hook
-        run: npm run check
+      - uses: prefix-dev/setup-pixi@ad1da6449d9e506fd127fd67ab2d054a769f6a94 # v0.11.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: pixi run lefthook-run
 
+  # Builds and smoke-tests the release binaries so a packaging break shows up before a tag.
   build:
+    name: build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -114,27 +136,32 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: prefix-dev/setup-pixi@ad1da6449d9e506fd127fd67ab2d054a769f6a94 # v0.11.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: pixi run package
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          node-version: 24
-      - name: Build package
-        run: |
-          npm ci
-          npm pack
-      # The tarball is platform-independent, so only one job uploads it; the rest
-      # of the matrix is here to prove the build runs everywhere.
-      - name: Upload artifact
-        if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          path: "*.tgz"
+          path: out/*
           archive: false
 
-  # Builds and smoke-tests the release binaries so a packaging break shows up before a tag.
-  sea:
+  npm-packages:
+    needs: build
+    runs-on: ubuntu-latest
     permissions:
       contents: read
-    uses: ./.github/workflows/sea.yml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: prefix-dev/setup-pixi@ad1da6449d9e506fd127fd67ab2d054a769f6a94 # v0.11.2
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: diffle-*
+          path: archives
+          merge-multiple: true
+      - run: pixi run npm-packages
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-packages
+          path: npm-packages
 
   lockfile:
     runs-on: ubuntu-latest
@@ -142,16 +169,25 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: prefix-dev/setup-pixi@ad1da6449d9e506fd127fd67ab2d054a769f6a94 # v0.11.2
         with:
-          node-version: 24
+          locked: true
       # The `npm ci` in the other jobs only checks the dependency tree, so drift in
       # the lockfile's own metadata (name, version, bin, engines) passes it silently.
       # `--package-lock-only` needs no install, so this job does not run `npm ci`.
       - name: Check package-lock.json is up to date
         run: |
-          npm install --package-lock-only --no-audit --no-fund
+          pixi run -- npm install --package-lock-only --no-audit --no-fund
           git diff --exit-code -- package-lock.json || {
             echo "::error file=package-lock.json::package-lock.json is out of date; run \`npm install\` and commit the result. Use Node 24 as \`engines\` requires: older npm keeps optional peer entries this npm drops, so the lockfile it writes fails here."
+            exit 1
+          }
+      # The notices file is generated from Cargo.lock; the pre-commit hook regenerates it, and this
+      # catches a commit that skipped the hook or a crate whose licence about.toml does not accept.
+      - name: Check THIRD_PARTY_NOTICES.md is up to date
+        run: |
+          pixi run licenses
+          git diff --exit-code -- THIRD_PARTY_NOTICES.md || {
+            echo "::error file=THIRD_PARTY_NOTICES.md::THIRD_PARTY_NOTICES.md is out of date; run \`pixi run licenses\` and commit the result."
             exit 1
           }

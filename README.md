@@ -22,8 +22,7 @@ pixi global install diffle               # conda-forge
 npm install -g @moritzwilksch/diffle     # npm
 ```
 
-Or grab the standalone binary, which needs no Node.js. On Linux (x64, arm64, glibc) and Apple
-silicon macOS:
+Or grab the standalone binary. On Linux (x64, arm64, glibc) and Apple silicon macOS:
 
 ```bash
 curl -fsSL https://diffle.app/install.sh | sh
@@ -36,16 +35,23 @@ to pin a release. On Windows (x64, arm64), from PowerShell:
 irm https://diffle.app/install.ps1 | iex
 ```
 
+It installs to `%LOCALAPPDATA%\Programs\diffle` and adds that to your user PATH; set
+`DIFFLE_NO_MODIFY_PATH` to keep the PATH as it is.
+
 To try it without installing:
 
 ```bash
-pixi exec diffle working
 npx @moritzwilksch/diffle working
+pixi exec diffle working
 nix run github:moritzwilksch/diffle -- working
 ```
 
 The Nix package bundles `gh`; `#minimal` drops it, and `#web`, `#rust`, `#python`, and `#csharp` bundle
-language servers.
+language servers. Every package takes more with `withLsps`, and `#unwrapped` is the bare binary:
+
+```nix
+diffle.packages.${system}.default.withLsps [ pkgs.gopls pkgs.clang-tools ]
+```
 
 ## Pick what to review
 
@@ -149,17 +155,20 @@ python    pyrefly lsp
 rust      not on PATH (tried rust-analyzer)
 ```
 
-Override a server or turn one off:
+Override a server or turn one off for a run:
 
 ```bash
-diffle config set-lsp rust "rust-analyzer"       # persistent
-diffle config set-lsp java ""                    # never start one for java
-diffle config unset-lsp rust                     # back to PATH
 diffle working --lsp python="pyrefly lsp"        # this run only
 diffle working --no-lsp                          # none at all
 ```
 
-Language servers run through a shell inside the repository and can read anything your user can.
+Or persistently, in the config file (`diffle config` prints its path and contents):
+
+```json
+{ "lspCommands": { "rust": "rust-analyzer", "java": "" } }
+```
+
+Language servers run inside the repository and can read anything your user can.
 `--no-lsp` starts none.
 
 ## Shell completions
@@ -187,22 +196,35 @@ name, trust that address instead. A rejected request gets a 403 naming the heade
 
 ## Development
 
+The server is Rust (`crates/diffle`), the client TypeScript; you need a Rust toolchain
+(`rust-toolchain.toml` pins it) and Node.js.
+
+[pixi](https://pixi.sh) installs the toolchain, git, gh and lefthook from `pixi.lock`, and its tasks
+are the entry points, locally and in CI. npm builds and tests the client; cargo builds and tests
+the server, whose release build embeds the client.
+
 ```bash
-npm install
-npm run dev -- working
-npm test && npm run typecheck && npm run build
+pixi run diffle working                   # build the client, then serve the working tree
+pixi run test-node && pixi run test-rust  # the client's and the server's suites
+pixi run lefthook-run                     # the pre-commit hook over every file, as CI runs it
+pixi run build-release                    # the release binary
+pixi run diffle lsp                       # the language servers the environment resolves
 ```
 
-`npm run install-hooks` wires up the pre-commit hook (`.lefthook.yml`): it formats and lints the staged files, typechecks, and checks file-size and folder limits across the whole tree. `npm run check` runs the same hook over every file, as CI does.
-Restart `npm run dev` after client changes; the server serves `dist/client`.
+The environment puts real language servers on PATH, so `pixi run diffle working` reviews with them.
+`pixi run lefthook-install` wires up the pre-commit hook (`.lefthook.yml`): it formats and lints the staged files, typechecks, and checks file-size and folder limits across the whole tree. `pixi run lefthook-run` runs the same hook over every file, as CI does.
+A debug build reads `dist/client` from disk: after a client change, run `npm run build`
+and reload the page. A release build (`cargo build --release`) embeds the client.
 `npm run fixture -- <dir>` builds the repository the tests review, covering renames, binaries,
-CRLF, and more. Screenshot tests run in Docker so they match CI:
+CRLF, and more. The browser suite drives Playwright's Linux Chromium in a Docker container
+(`compose.yml`, started and stopped by the suite) while the tests and the release binary run
+natively, so screenshots match CI on every host:
 
 ```bash
-npm run test:e2e:docker                  # the browser suite
-npm run test:e2e:docker -- -g search     # matching scenarios
-npm run test:e2e:report                  # open the last report
-npm run test:e2e:docker:update           # accept new screenshots
+pixi run e2e                              # the browser suite, after the release build
+pixi run e2e -g search                    # matching scenarios
+pixi run e2e-report                       # open the last report
+pixi run e2e --update-snapshots           # accept new screenshots
 ```
 
 See [AGENTS.md](AGENTS.md) for more.

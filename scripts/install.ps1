@@ -1,7 +1,8 @@
 # Installs the diffle binary from a GitHub release.
 #   irm https://diffle.app/install.ps1 | iex
 # DIFFLE_VERSION picks a release tag (default: latest); DIFFLE_INSTALL_DIR the target
-# (default: %LOCALAPPDATA%\Programs\diffle); DIFFLE_DOWNLOAD_URL a mirror of the release assets.
+# (default: %LOCALAPPDATA%\Programs\diffle); DIFFLE_DOWNLOAD_URL a mirror of the release assets;
+# DIFFLE_NO_MODIFY_PATH leaves the user PATH alone.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue' # Windows PowerShell's progress bar slows downloads tenfold.
 
@@ -40,10 +41,15 @@ try {
   $line = Get-Content (Join-Path $tmp 'SHA256SUMS') | Where-Object { (($_ -split '\s+')[1] -replace '^\*') -eq $asset }
   if (-not $line) { Fail "SHA256SUMS lists no $asset" }
   $expected = ($line -split '\s+')[0]
-  $actual = (Get-FileHash -Algorithm SHA256 (Join-Path $tmp $asset)).Hash
+  # Through .NET rather than Get-FileHash and Expand-Archive: those come from modules, which a
+  # Windows PowerShell started with another PowerShell's module path cannot find.
+  $stream = [System.IO.File]::OpenRead((Join-Path $tmp $asset))
+  try { $actual = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash($stream)) -replace '-' }
+  finally { $stream.Dispose() }
   if ($expected -ne $actual) { Fail "checksum mismatch for $asset" } # -ne ignores case
 
-  Expand-Archive -Path (Join-Path $tmp $asset) -DestinationPath $tmp
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  [System.IO.Compression.ZipFile]::ExtractToDirectory((Join-Path $tmp $asset), $tmp)
   New-Item -ItemType Directory -Force -Path $dir | Out-Null
   Move-Item -Force (Join-Path $tmp 'diffle.exe') (Join-Path $dir 'diffle.exe')
 } finally {
@@ -54,7 +60,7 @@ $exe = Join-Path $dir 'diffle.exe'
 Write-Host "installed $(& $exe --version) to $exe"
 
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-if (($userPath -split ';') -notcontains $dir) {
+if (-not $env:DIFFLE_NO_MODIFY_PATH -and (($userPath -split ';') -notcontains $dir)) {
   [Environment]::SetEnvironmentVariable('Path', (@($userPath, $dir) | Where-Object { $_ }) -join ';', 'User')
   $env:Path = "$env:Path;$dir"
   Write-Host "added $dir to your user PATH; restart other terminals to pick it up"

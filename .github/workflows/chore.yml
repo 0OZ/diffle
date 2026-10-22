@@ -1,7 +1,8 @@
 name: Chore
 on:
-  # Runs with write permissions: process PR metadata only; never execute PR code.
-  pull_request_target:
+  # Runs with write permissions so it can comment on fork pull requests: it reads PR metadata
+  # only and never checks out or executes PR code, which is what the audit warns about.
+  pull_request_target: # zizmor: ignore[dangerous-triggers]
     branches: [main]
     types: [opened, reopened, edited, synchronize]
 
@@ -46,15 +47,3 @@ jobs:
         with:
           header: conventional-commit-pr-title
           delete: true
-
-  assign-labels:
-    name: Assign Labels
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - name: Assign labels
-        uses: release-drafter/release-drafter/autolabeler@34d80673e067bdc0c24568d3af899c216adcfaa9 # v7.7.0
-        with:
-          token: ${{ github.token }}

@@ -1,28 +1,20 @@
+# The browser the e2e tests and the capture scripts drive: Playwright's Chromium in its Linux
+# image, served over WebSocket. The tests, the fixture repositories and diffle run natively on the
+# host; the browser reaches them through Playwright's loopback tunnel. test/e2e/browser-server.ts
+# starts and stops this service and passes PLAYWRIGHT_VERSION from the installed @playwright/test,
+# which the server inside must match; the default below only serves hand-run compose commands
+# (`docker compose logs browser`).
 services:
-  e2e:
+  browser:
+    image: mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION:-1.63.0}-noble
     # Pin the architecture too: screenshots must match the Linux x64 CI runner.
     platform: linux/amd64
-    build:
-      context: .
-      dockerfile_inline: |
-        FROM node:24-bookworm-slim AS node
-        FROM mcr.microsoft.com/playwright:v1.63.0-noble
-        COPY --from=node /usr/local/ /usr/local/
-        # Any host user can run the suite: Git trusts the mount and the volumes below start writable.
-        RUN git config --system --add safe.directory /workspace \
-          && mkdir -p /workspace/node_modules /workspace/dist \
-          && chmod 777 /workspace/node_modules /workspace/dist
     init: true
+    # Chromium wants the host's shared memory, not the container's 64 MB.
     ipc: host
-    working_dir: /workspace
-    environment:
-      CI: "true"
-      FORCE_COLOR: "1"
-      # npm needs a writable home under an arbitrary `--user`.
-      HOME: /tmp
-    volumes:
-      - .:/workspace
-      # Keep Linux dependencies and build output separate from the host installation.
-      - /workspace/node_modules
-      - /workspace/dist
-    entrypoint: ["/bin/sh", "-c", 'npm ci && npm run test:e2e -- "$$@"', "e2e"]
+    user: pwuser
+    working_dir: /home/pwuser
+    ports:
+      - "127.0.0.1:${DIFFLE_BROWSER_PORT:-3000}:3000"
+    # The image holds the browsers alone; the package is fetched once and kept in this container.
+    command: npx -y playwright@${PLAYWRIGHT_VERSION:-1.63.0} run-server --port 3000 --host 0.0.0.0

@@ -43,11 +43,11 @@ export async function startDiffle({
   timeoutMs = 30000,
 }: DiffleOptions): Promise<RunningDiffle> {
   const configDir = await mkdtemp(join(tmpdir(), 'diffle-e2e-config-'));
+  const [program, ...launcher] = diffleCommand(root);
   const proc = spawn(
-    process.execPath,
+    program!,
     [
-      join(REPO_ROOT, 'node_modules/tsx/dist/cli.mjs'),
-      join(root, 'src/cli/main.ts'),
+      ...launcher,
       '-C',
       repo,
       '--port',
@@ -213,11 +213,39 @@ function clientInputsKey(root: string): string {
  * Build `cwd`'s client unless `dist/client` already matches its sources. Output appears only on
  * failure. Returns whether it built.
  */
+/**
+ * How to run the diffle of checkout `root`: `DIFFLE_BIN` for this checkout when set, else its
+ * release binary. A base checkout from before the Rust server runs its TypeScript CLI from source.
+ */
+export function diffleCommand(root = REPO_ROOT): string[] {
+  if (root === REPO_ROOT && process.env.DIFFLE_BIN) return [resolve(process.env.DIFFLE_BIN)];
+  if (!existsSync(join(root, 'Cargo.toml')))
+    return [process.execPath, join(REPO_ROOT, 'node_modules/tsx/dist/cli.mjs'), join(root, 'src/cli/main.ts')];
+  return [join(targetDir(root), 'release', process.platform === 'win32' ? 'diffle.exe' : 'diffle')];
+}
+
+/** Base checkouts share this checkout's build cache: only what a commit changed recompiles. */
+function targetDir(root: string): string {
+  return root === REPO_ROOT ? join(REPO_ROOT, 'target') : join(tmpdir(), 'diffle-base-target');
+}
+
+/** Builds checkout `root`'s release binary, which embeds its client: build the client first. */
+export function buildServer(root = REPO_ROOT): void {
+  if (!existsSync(join(root, 'Cargo.toml'))) return;
+  execFileSync('cargo', ['build', '--release', '--locked', '--quiet'], {
+    cwd: root,
+    stdio: 'inherit',
+    env: { ...process.env, CARGO_TARGET_DIR: targetDir(root) },
+  });
+}
+
 export function buildClient(cwd = REPO_ROOT): boolean {
   const stamp = join(cwd, 'dist/client/.build-stamp');
   const key = clientInputsKey(cwd);
   if (existsSync(stamp) && readFileSync(stamp, 'utf8') === key) return false;
-  quiet(npm, ['run', 'build:client'], cwd);
+  // A base checkout from before the server moved to Rust names the client build `build:client`.
+  const scripts = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf8')).scripts as Record<string, string>;
+  quiet(npm, ['run', 'build:client' in scripts ? 'build:client' : 'build'], cwd);
   writeFileSync(stamp, key);
   return true;
 }
