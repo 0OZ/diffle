@@ -2,7 +2,7 @@ import { SegmentedControl, ToggleButton } from '@/client/ui/ToggleButton.js';
 import { Button } from '@/client/ui/Button.js';
 import type { GitStatusEntry } from '@pierre/trees';
 import { FileTree, useFileTree, useFileTreeSearch } from '@pierre/trees/react';
-import { EyeOff } from 'lucide-react';
+import { ArrowLeftRight, EyeOff } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { focusReview } from '@/client/keyboard/useKeymap.js';
 import { countViewed, filesUnder, isCollapsed, isViewed, viewedState } from '@/client/model.js';
@@ -86,8 +86,10 @@ export function FileTreePane() {
   useEffect(() => {
     bodyRef.current?.firstElementChild?.toggleAttribute('data-search-empty', searchEmpty);
   }, [searchEmpty]);
-  // Long names follow the diff's long lines: wrapped, the tree ellipsizes them; unwrapped, the pane scrolls sideways.
-  const scrolls = useStore((s) => !s.config.lineWrap);
+  // Long names follow the diff's long lines until the header button decides: wrapped, the tree ellipsizes them;
+  // unwrapped, the pane scrolls sideways.
+  const scrolls = useStore((s) => s.layout.treeScroll ?? !s.config.lineWrap);
+  const setLayout = useStore((s) => s.setLayout);
   useEffect(() => {
     const host = bodyRef.current?.firstElementChild;
     if (!(host instanceof HTMLElement)) return;
@@ -257,7 +259,7 @@ export function FileTreePane() {
 
   return (
     <aside className="tree-theme flex min-h-0 flex-col bg-surface">
-      <div className="@container flex items-center gap-2 border-b border-b-border px-2.5 py-1.5 text-muted [&_button]:flex-none [&_button]:whitespace-nowrap">
+      <div className="@container flex flex-wrap items-center gap-2 border-b border-b-border px-2.5 py-1.5 text-muted [&_button]:flex-none [&_button]:whitespace-nowrap">
         <SegmentedControl>
           <ToggleButton selected={scope === 'changed'} onClick={() => setScope('changed')}>
             Changed
@@ -266,9 +268,22 @@ export function FileTreePane() {
             All files
           </ToggleButton>
         </SegmentedControl>
-        {/* The count goes first when the bar is too narrow for every control: the buttons stay reachable. */}
+        {/* The count goes first when the bar is too narrow for every control; the buttons then wrap under the switch. */}
         <div className="ml-auto flex items-center gap-2">
           <span className="@max-[15rem]:hidden">{paths.length}</span>
+          <Button
+            variant="ghost"
+            icon
+            className={
+              scrolls ? 'border-accent bg-[color-mix(in_srgb,_var(--accent)_12%,_transparent)] text-accent' : ''
+            }
+            aria-label="Scroll long names"
+            aria-pressed={scrolls}
+            title={scrolls ? 'Long names scroll; click to shorten them' : 'Long names shortened; click to scroll them'}
+            onClick={() => setLayout({ treeScroll: !scrolls })}
+          >
+            <ArrowLeftRight size="0.875rem" />
+          </Button>
           <Button
             variant="ghost"
             danger={unview.armed}

@@ -152,6 +152,8 @@ export interface PanelLayout {
 export interface LayoutState {
   /** In px once the user has dragged the resizer; null leaves the stylesheet's rem default in charge. */
   treeWidth: number | null;
+  /** Null follows the diff's line wrap until the user chooses. */
+  treeScroll: boolean | null;
   treeVisible: boolean;
   /** Each view's side panel: comments beside the diff read differently from the details beside the graph. */
   panels: Partial<Record<ViewId, PanelLayout>>;
@@ -161,9 +163,14 @@ function readLayout(): LayoutState {
   try {
     const raw = localStorage.getItem(LAYOUT_KEY);
     const saved = raw ? (JSON.parse(raw) as Partial<LayoutState>) : {};
-    return { treeWidth: saved.treeWidth ?? null, treeVisible: saved.treeVisible ?? true, panels: saved.panels ?? {} };
+    return {
+      treeWidth: saved.treeWidth ?? null,
+      treeScroll: saved.treeScroll ?? null,
+      treeVisible: saved.treeVisible ?? true,
+      panels: saved.panels ?? {},
+    };
   } catch {
-    return { treeWidth: null, treeVisible: true, panels: {} };
+    return { treeWidth: null, treeScroll: null, treeVisible: true, panels: {} };
   }
 }
 
