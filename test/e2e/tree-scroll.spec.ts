@@ -111,6 +111,26 @@ test('the tree ellipsizes while lines wrap, unwrapping trades that for the scrol
   await expect.poll(() => scrollsSideways(page)).toBe(true);
 });
 
+test('the header button overrides the wrap setting in both directions, and the choice sticks', async ({ page }) => {
+  const button = page.getByRole('button', { name: 'Scroll long names' });
+  await expect(button).toHaveAttribute('aria-pressed', 'false');
+
+  // Lines still wrap, yet the names scroll.
+  await button.click();
+  await expect(button).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => scrollsSideways(page)).toBe(true);
+  await page.reload();
+  await expect(button).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => scrollsSideways(page)).toBe(true);
+
+  // Lines unwrapped, yet the names are shortened.
+  await button.click();
+  await page.keyboard.press('z');
+  await page.keyboard.press('w');
+  await expect(button).toHaveAttribute('aria-pressed', 'false');
+  await expect.poll(() => scrollsSideways(page)).toBe(false);
+});
+
 test('a tooltip follows the pointer down the rows without waiting again', async ({ page }) => {
   await scrollLongNames(page);
   const pane = page.locator('file-tree-container [data-file-tree-virtualized-scroll]');
@@ -129,6 +149,14 @@ test('a tooltip follows the pointer down the rows without waiting again', async 
 test('a narrow toolbar drops the count and keeps its buttons in reach', async ({ page }) => {
   const bar = page.locator('aside.tree-theme > div').first();
   const fits = () => bar.evaluate((el) => el.scrollWidth <= el.clientWidth);
+  // Narrowest of all, the buttons wrap under the switch instead of running past the pane's edge.
+  const buttonsInside = () =>
+    bar.evaluate((el) => {
+      const right = el.getBoundingClientRect().right;
+      return Array.from(el.querySelectorAll('button'), (b) => b.getBoundingClientRect().right <= right + 0.5).every(
+        Boolean,
+      );
+    });
   const count = bar.getByText('17', { exact: true });
   const dragTo = async (offset: number) => {
     const divider = (await page.getByTitle('Drag to resize').first().boundingBox())!;
@@ -139,6 +167,8 @@ test('a narrow toolbar drops the count and keeps its buttons in reach', async ({
     // The tooltip lifts the divider's title while the pointer rests on it; leave so the next drag finds it.
     await page.mouse.move(700, 400);
   };
+
+  await expect.poll(buttonsInside).toBe(true);
 
   await dragTo(42);
   await expect.poll(fits).toBe(true);
