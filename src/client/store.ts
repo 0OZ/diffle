@@ -145,6 +145,8 @@ export interface SearchState {
 export interface LayoutState {
   /** Pane widths in px once the user has dragged a resizer; null leaves the stylesheet's rem default in charge. */
   treeWidth: number | null;
+  /** Whether long names in the tree scroll sideways once the user has chosen; null follows the diff's line wrap. */
+  treeScroll: boolean | null;
   panelWidth: number | null;
   treeVisible: boolean;
   panelVisible: boolean;
@@ -152,6 +154,7 @@ export interface LayoutState {
 const LAYOUT_KEY = 'diffle:layout';
 const DEFAULT_LAYOUT: LayoutState = {
   treeWidth: null,
+  treeScroll: null,
   panelWidth: null,
   treeVisible: true,
   panelVisible: true,
