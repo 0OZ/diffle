@@ -406,6 +406,12 @@ const caller = (fn: string): string =>
 /** The panel's scroll is set, not eased, so the picture does not depend on when it is taken. */
 const scrollPanelToEnd = (page: Page) => details(page).evaluate((el) => void (el.scrollTop = el.scrollHeight));
 
+/** A list with 8px of the panel around it, so a focus ring is not cut; a whole-panel picture clips its heading. */
+const around = async (list: Locator) => {
+  const box = (await list.boundingBox())!;
+  return { x: box.x - 8, y: box.y - 8, width: box.width + 16, height: box.height + 16 };
+};
+
 const manyTest = test.extend({
   // The files are committed on the branch under review, so the default comparison shows them as added.
   repo: async ({ repo }, use) => {
@@ -482,7 +488,7 @@ manyTest.describe('a file with more callers than the panel lists at once', () =>
       await expect(more).toHaveText('Show all 9');
       await expect(more).toHaveAttribute('aria-expanded', 'false');
       await scrollPanelToEnd(page);
-      await expect(page).toHaveScreenshot('graph-used-by.png');
+      await expect(page).toHaveScreenshot('graph-used-by.png', { clip: await around(usedBy) });
 
       // The keyboard: Tab from the last row lands on the button, Enter opens and closes it, focus stays.
       await names.nth(5).locator('xpath=ancestor::button').focus();
