@@ -297,6 +297,29 @@ export const GithubMetadataSchema = z.object({
 });
 export type GithubMetadata = z.infer<typeof GithubMetadataSchema>;
 
+/** Lines of one side of a snapshot to link to on the forge origin points at. */
+export const PermalinkRequestSchema = z.object({
+  /** Snapshot.version the lines were read from; another one is refused with a reason. */
+  version: z.number().int(),
+  /** The changed file's path; an old-side link follows a rename to its old path. */
+  path: z.string(),
+  side: SideSchema,
+  startLine: z.number().int(),
+  endLine: z.number().int(),
+});
+export type PermalinkRequest = z.infer<typeof PermalinkRequestSchema>;
+
+/**
+ * A link to lines at the commit their side shows, judged from local refs alone (no token, no
+ * network, no cache, so a push shows on the next request), or why there is none.
+ */
+export const PermalinkSchema = z.object({
+  url: z.string().nullable(),
+  /** Why there is no link: no forge origin, the worktree, a review that changed, an unpushed commit. */
+  reason: z.string().nullable(),
+});
+export type Permalink = z.infer<typeof PermalinkSchema>;
+
 export const ChangeStatusSchema = z.enum(['A', 'M', 'D', 'R', 'C', 'T', 'U']);
 export type ChangeStatus = z.infer<typeof ChangeStatusSchema>;
 

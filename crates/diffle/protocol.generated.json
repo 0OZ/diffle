@@ -1432,6 +1432,65 @@
       ],
       "description": "Body of `POST /api/patch`: the changed files whose patches to return, concatenated. Unknown paths are skipped."
     },
+    "Permalink": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Why there is no link: no forge origin, the worktree, a review that changed, an unpushed commit."
+        }
+      },
+      "required": [
+        "url",
+        "reason"
+      ],
+      "description": "A link to lines at the commit their side shows, judged from local refs alone (no token, no\nnetwork, no cache, so a push shows on the next request), or why there is none."
+    },
+    "PermalinkRequest": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991,
+          "description": "Snapshot.version the lines were read from; another one is refused with a reason."
+        },
+        "path": {
+          "type": "string",
+          "description": "The changed file's path; an old-side link follows a rename to its old path."
+        },
+        "side": {
+          "$ref": "#/$defs/Side"
+        },
+        "startLine": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "endLine": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "version",
+        "path",
+        "side",
+        "startLine",
+        "endLine"
+      ],
+      "description": "Lines of one side of a snapshot to link to on the forge origin points at."
+    },
     "PullRef": {
       "type": "object",
       "properties": {

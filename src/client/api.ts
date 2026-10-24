@@ -24,6 +24,8 @@ import {
   LspLogResponseSchema,
   LspSymbolsResponseSchema,
   MovedSchema,
+  PermalinkRequestSchema,
+  PermalinkSchema,
   RefsResponseSchema,
   SearchResponseSchema,
   ServerMessageSchema,
@@ -35,6 +37,7 @@ import type {
   GithubExportRequest,
   LspPosition,
   EnterRequest,
+  PermalinkRequest,
   RangeView,
   ReplyCreate,
   SearchScope,
@@ -92,6 +95,9 @@ const q = (params: Record<string, string | undefined>) =>
 
 export const api = {
   github: () => json(GithubMetadataSchema, 'api/github'),
+  /** A link to lines on origin's forge, or why there is none; local refs only, so it answers at once. */
+  permalink: (req: PermalinkRequest) =>
+    json(PermalinkSchema, 'api/permalink', { method: 'POST', body: encode(PermalinkRequestSchema, req) }),
   snapshot: () => json(SnapshotSchema, 'api/snapshot'),
   moved: () => json(MovedSchema.nullable(), 'api/moved'),
   /** Recompute the snapshot where the refs point now. */
