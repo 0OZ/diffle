@@ -653,6 +653,13 @@ export const LspLocationSchema = LspPositionSchema.extend({
 });
 export type LspLocation = z.infer<typeof LspLocationSchema>;
 
+/**
+ * `POST /api/lsp/hover`. `ownerOnly` asks the file's own server alone: a server joining the
+ * language, such as Tailwind's, adds notes for markup that read as noise on a declaration.
+ */
+export const LspHoverRequestSchema = LspPositionSchema.extend({ ownerOnly: z.boolean().optional() });
+export type LspHoverRequest = z.infer<typeof LspHoverRequestSchema>;
+
 /** One language server process, as its bridge sees it. */
 export const LspStateSchema = z.enum(['starting', 'ready', 'unavailable']);
 export type LspState = z.infer<typeof LspStateSchema>;
@@ -832,7 +839,10 @@ export const LspSymbolSchema = z.object({
   /** Enclosing class or function, when any. */
   container: z.string().optional(),
   path: z.string(),
+  /** Line of the name, where navigation lands. */
   line: z.number().int(),
+  /** First line of the declaration's full range, before `line` when a decorator or doc comment leads it. */
+  startLine: z.number().int(),
   /** Last line of the declaration's full range. */
   endLine: z.number().int(),
   col: z.number().int(),
@@ -842,6 +852,44 @@ export type LspSymbol = z.infer<typeof LspSymbolSchema>;
 /** `GET /api/lsp/symbols`: a file's outline with `path`, else the repository's symbols matching `q`. */
 export const LspSymbolsResponseSchema = z.object({ symbols: LspSymbolSchema.array(), inconclusive });
 export type LspSymbolsResponse = z.infer<typeof LspSymbolsResponseSchema>;
+
+/** A changed symbol carries its change; a `consumer` is unchanged code that uses one. */
+export const GraphNodeStatusSchema = z.enum(['added', 'modified', 'consumer']);
+export type GraphNodeStatus = z.infer<typeof GraphNodeStatusSchema>;
+
+/**
+ * A symbol in the change graph: an interface-level symbol the diff touches, or an unchanged one
+ * using it. A consumer used from a file's top level, outside any symbol, is that file: kind 1 (File),
+ * named by its path, at line 1.
+ */
+export const GraphNodeSchema = LspSymbolSchema.extend({
+  /** `path:line:col` of the symbol's name, or the path of a file-level consumer. Stable within a snapshot. */
+  id: z.string(),
+  status: GraphNodeStatusSchema,
+  /** Consumers left out beyond the per-symbol cap; changed symbols only. */
+  moreConsumers: z.number().int().optional(),
+});
+export type GraphNode = z.infer<typeof GraphNodeSchema>;
+
+/** `from` uses `to`: the language server lists places inside `from` among `to`'s references. */
+export const GraphEdgeSchema = z.object({
+  from: z.string(),
+  to: z.string(),
+  /** Lines in `from`'s file holding those references, ascending. */
+  lines: z.number().int().array(),
+});
+export type GraphEdge = z.infer<typeof GraphEdgeSchema>;
+
+/** `GET /api/lsp/graph`: the snapshot's changed symbols and the code using them, from the language servers. */
+export const GraphResponseSchema = z.object({
+  nodes: GraphNodeSchema.array(),
+  edges: GraphEdgeSchema.array(),
+  /** Changed symbols past the server's cap, by whole files, most telling first; drawn with `GraphQuery.all`. */
+  cut: GraphNodeSchema.array(),
+  /** Why the graph may lack nodes or edges: a server was busy or unavailable while answering. */
+  inconclusive: z.string().optional(),
+});
+export type GraphResponse = z.infer<typeof GraphResponseSchema>;
 
 /** Derived per changed file: 'restale' means viewed at an older blob. */
 export const ViewedStateSchema = z.enum(['unviewed', 'viewed', 'restale']);
@@ -990,6 +1038,12 @@ export const SymbolsQuerySchema = z
   .object({ path: z.string().min(1).optional(), q: z.string().optional() })
   .refine((query) => query.path != null || query.q != null, 'path or q required');
 export type SymbolsQuery = z.infer<typeof SymbolsQuerySchema>;
+/**
+ * `GET /api/lsp/graph`: `all` lifts the cap on changed symbols; `scope`, a folder without its
+ * trailing slash, graphs only the changed files under it, whose dependents may live anywhere.
+ */
+export const GraphQuerySchema = z.object({ all: z.literal('1').optional(), scope: z.string().min(1).optional() });
+export type GraphQuery = z.infer<typeof GraphQuerySchema>;
 export const ClearThreadsQuerySchema = z.object({ stale: z.literal('1').optional() });
 export const PatchQuerySchema = z.object({ path: z.string().optional() });
 export const ApiErrorSchema = z.object({ error: z.string() });
