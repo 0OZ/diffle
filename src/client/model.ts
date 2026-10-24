@@ -20,7 +20,7 @@ import {
 } from '@/shared/protocol.js';
 import { fuzzyFilter } from '@/shared/fuzzy.js';
 import { resolveRange, type ResolvedRange } from './comments/anchor.js';
-import { callers, linkLines, listing } from './connected/focus.js';
+import { callers, linkLines, listing } from './connected/clusters/focus.js';
 import type { ReviewState } from './store.js';
 
 // Pure functions over store state. No effects, no store import at runtime, so

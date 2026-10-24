@@ -60,8 +60,8 @@ import {
 } from '@/client/model.js';
 import { remPx } from '@/client/scale.js';
 import { CODE_THEMES, HIGHLIGHTER } from '@/client/theme.js';
-import { ContextBadge } from '@/client/connected/ContextBadge.js';
-import { sameFocus } from '@/client/connected/focus.js';
+import { ContextBadge } from '@/client/connected/clusters/ContextBadge.js';
+import { sameFocus } from '@/client/connected/clusters/focus.js';
 import { useStore, type Draft, type Loaded, type ReviewState } from '@/client/store.js';
 import { installInlineWheel, revealInline } from './inline.js';
 import { rowOf, topRow } from './rows.js';

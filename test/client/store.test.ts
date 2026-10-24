@@ -12,7 +12,7 @@ import type {
   UserConfig,
   ViewedEntry,
 } from '@/shared/protocol.js';
-import { IDLE_GRAPH } from '@/client/connected/focus.js';
+import { IDLE_GRAPH } from '@/client/connected/clusters/focus.js';
 
 /** One python server in `state`; LSP_OFF is a run started with --no-lsp. */
 const lspStatus = (state: LspServerStatus['state'], extra: Partial<LspServerStatus> = {}): LspStatus => ({

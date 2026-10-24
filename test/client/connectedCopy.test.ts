@@ -7,7 +7,7 @@ import {
   graphButtonTitle,
   graphCounts,
   plural,
-} from '@/client/connected/copy.js';
+} from '@/client/connected/clusters/copy.js';
 
 describe('elapsedLabel', () => {
   it('says nothing for the first seconds, so a quick analysis never flashes a timer', () => {

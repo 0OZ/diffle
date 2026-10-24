@@ -5,15 +5,15 @@ import { useStore } from '@/client/store.js';
 import { Button } from '@/client/ui/Button.js';
 import { Dialog, DialogContent } from '@/client/ui/dialog.js';
 import { SegmentedControl, ToggleButton } from '@/client/ui/ToggleButton.js';
-import { clusterTitle } from '@/client/connected/clusterTitle.js';
-import { GRAPH_TITLE, contextToggleTitle, graphCounts, hideTestsTitle } from '@/client/connected/copy.js';
-import { canListContext } from '@/client/connected/focus.js';
-import { isTestPath } from '@/client/connected/testPath.js';
-import { GraphCanvas, type GraphCanvasHandle, type Selection } from './GraphCanvas.js';
+import { clusterTitle } from '@/client/connected/clusters/clusterTitle.js';
+import { GRAPH_TITLE, contextToggleTitle, graphCounts, hideTestsTitle } from '@/client/connected/clusters/copy.js';
+import { canListContext } from '@/client/connected/clusters/focus.js';
+import { isTestPath } from '@/client/connected/clusters/testPath.js';
+import { GraphCanvas, type GraphCanvasHandle, type Selection } from '@/client/connected/canvas/GraphCanvas.js';
 import { GraphDetail, announcement, keepSelection } from './GraphDetail.js';
-import type { GraphLayout } from './layout.js';
-import { layoutGraph } from './layout.js';
-import { buildGraphModel, graphPending } from './model.js';
+import type { GraphLayout } from '@/client/connected/graph/layout.js';
+import { layoutGraph } from '@/client/connected/graph/layout.js';
+import { buildGraphModel, graphPending } from '@/client/connected/graph/model.js';
 
 interface Built {
   cluster: GraphCluster;

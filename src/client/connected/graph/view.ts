@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react';
 import type { Dir } from './nav.js';
 import type { GraphLayout, PlacedNode, Point, RoutedEdge } from './layout.js';
 import { STATUS, kindGlyph } from './glyphs.js';
-import { arrowSentence, plural } from '@/client/connected/copy.js';
+import { arrowSentence, plural } from '@/client/connected/clusters/copy.js';
 import { ZOOM_STEP, clamp } from './viewport.js';
 
 /** What the canvas has selected: a file, an arrow, or nothing. Controlled by the parent. */

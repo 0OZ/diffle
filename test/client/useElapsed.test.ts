@@ -2,7 +2,7 @@
 import { act, createElement, useEffect } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useElapsed } from '@/client/connected/useElapsed.js';
+import { useElapsed } from '@/client/connected/clusters/useElapsed.js';
 
 let root: Root;
 let host: HTMLDivElement;

@@ -42,7 +42,7 @@ import {
   type Focus,
   type GraphState,
   type TreeScope,
-} from './connected/focus.js';
+} from './connected/clusters/focus.js';
 import {
   buildNav,
   cursorFromSelection,
@@ -86,7 +86,7 @@ import {
 } from './model.js';
 import { applyTheme, readTheme, storeTheme, type ThemeChoice } from './theme.js';
 
-export type { Focus, GraphState, TreeScope } from './connected/focus.js';
+export type { Focus, GraphState, TreeScope } from './connected/clusters/focus.js';
 
 export type Loaded =
   | { kind: 'diff'; fileDiff: FileDiffMetadata }

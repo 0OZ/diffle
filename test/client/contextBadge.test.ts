@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { GraphContext } from '@/shared/protocol.js';
-import { contextTitle, usesLabel } from '@/client/connected/ContextBadge.js';
+import { contextTitle, usesLabel } from '@/client/connected/clusters/ContextBadge.js';
 
 const entry = (uses: GraphContext['uses'], refs = 0): GraphContext => ({ path: 'ctx/x.ts', refs, uses });
 

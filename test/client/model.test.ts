@@ -39,7 +39,7 @@ import {
   reuseThreads,
   viewedState,
 } from '@/client/model.js';
-import { IDLE_GRAPH, type Focus } from '@/client/connected/focus.js';
+import { IDLE_GRAPH, type Focus } from '@/client/connected/clusters/focus.js';
 import type { ReviewState } from '@/client/store.js';
 
 const GRAPH: GraphResponse = {
