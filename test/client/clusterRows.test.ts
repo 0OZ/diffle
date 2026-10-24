@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { GraphCluster, GraphResponse } from '@/shared/protocol.js';
-import { clusterRows, scopePaths } from '@/client/connected/rows.js';
+import { clusterRows, scopePaths } from '@/client/connected/clusters/rows.js';
 
 const cluster = (id: string, files: string[], extra: Partial<GraphCluster> = {}): GraphCluster => ({
   id,

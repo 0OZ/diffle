@@ -1,8 +1,8 @@
 import { memo, type CSSProperties, type FocusEvent } from 'react';
-import { STATUS } from './glyphs.js';
-import type { NodeStatus } from './model.js';
-import { TEST_TAG_WIDTH, type PlacedNode } from './layout.js';
-import { NODE_STAGGER_CAP, fitText, nodeLabel, staggerVar } from './view.js';
+import { STATUS } from '@/client/connected/graph/glyphs.js';
+import type { NodeStatus } from '@/client/connected/graph/model.js';
+import { TEST_TAG_WIDTH, type PlacedNode } from '@/client/connected/graph/layout.js';
+import { NODE_STAGGER_CAP, fitText, nodeLabel, staggerVar } from '@/client/connected/graph/view.js';
 
 const NAME_X = 38;
 const PAD_RIGHT = 10;

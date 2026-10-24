@@ -5,7 +5,7 @@ import {
   exampleOf,
   keepSelection,
   STRONGEST_SHOWN,
-} from '@/client/connected/graph/GraphDetail.js';
+} from '@/client/connected/dialog/GraphDetail.js';
 import type { GraphLayout, PlacedNode, RoutedEdge } from '@/client/connected/graph/layout.js';
 
 const node = (id: string, extra: Partial<PlacedNode> = {}): PlacedNode => ({

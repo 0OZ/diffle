@@ -12,7 +12,7 @@ import {
   listing,
   moveFocus,
   type Focus,
-} from '@/client/connected/focus.js';
+} from '@/client/connected/clusters/focus.js';
 
 const cluster = (id: string, files: string[], context: string[] = []): GraphCluster => ({
   id,

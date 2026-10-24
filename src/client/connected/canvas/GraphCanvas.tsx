@@ -14,8 +14,8 @@ import {
 import { GraphEdgeLabel, GraphEdgeLine, type GraphEdgeProps } from './GraphEdge.js';
 import { GraphControls, GraphLegend } from './GraphLegend.js';
 import { GraphNode } from './GraphNode.js';
-import type { GraphLayout, RoutedEdge } from './layout.js';
-import { firstNode, neighbour } from './nav.js';
+import type { GraphLayout, RoutedEdge } from '@/client/connected/graph/layout.js';
+import { firstNode, neighbour } from '@/client/connected/graph/nav.js';
 import {
   KEYS_HELP,
   NODE_STAGGER_CAP,
@@ -31,11 +31,12 @@ import {
   staggerVar,
   toggleSelection,
   type Selection,
-} from './view.js';
-import { ZOOM_STEP, fitTransform, panIntoView, wheelFactor, zoomAt, type Size, type Transform } from './viewport.js';
+} from '@/client/connected/graph/view.js';
+import { ZOOM_STEP, fitTransform, panIntoView, wheelFactor, zoomAt } from '@/client/connected/graph/viewport.js';
+import type { Size, Transform } from '@/client/connected/graph/viewport.js';
 import './graph.css';
 
-export type { Selection } from './view.js';
+export type { Selection } from '@/client/connected/graph/view.js';
 
 export interface GraphCanvasHandle {
   /** Puts keyboard focus on the active node. */

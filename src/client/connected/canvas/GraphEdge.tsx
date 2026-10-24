@@ -1,6 +1,6 @@
 import { memo, useMemo } from 'react';
-import { kindGlyph } from './glyphs.js';
-import type { RoutedEdge } from './layout.js';
+import { kindGlyph } from '@/client/connected/graph/glyphs.js';
+import type { RoutedEdge } from '@/client/connected/graph/layout.js';
 import {
   EDGE_STAGGER_CAP,
   arrowHead,
@@ -10,7 +10,7 @@ import {
   staggerVar,
   strokeWidth,
   trimEnd,
-} from './view.js';
+} from '@/client/connected/graph/view.js';
 
 // Screen pixels (non-scaling stroke): a thin arrow stays easy to hit when zoomed out.
 const HIT_WIDTH = 20;

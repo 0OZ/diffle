@@ -1,8 +1,8 @@
 import { Info, Maximize, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { useId, useState } from 'react';
 import { Button } from '@/client/ui/Button.js';
-import { STATUS, kindGlyph } from './glyphs.js';
-import type { NodeStatus } from './model.js';
+import { STATUS, kindGlyph } from '@/client/connected/graph/glyphs.js';
+import type { NodeStatus } from '@/client/connected/graph/model.js';
 
 const STATUS_ORDER: readonly NodeStatus[] = ['added', 'modified', 'deleted', 'renamed', 'context'];
 /** One representative SymbolKind per colour group of an arrow's label. */

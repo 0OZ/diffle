@@ -13,7 +13,7 @@ import { TooltipHost } from './ui/TitleTooltips.js';
 
 // The graph (dagre, the canvas, the dialog) is a chunk of its own, fetched when the dialog first opens.
 const loadGraphDialog = () =>
-  lazy(() => import('./connected/graph/GraphDialog.js').then((m) => ({ default: m.GraphDialog })));
+  lazy(() => import('./connected/dialog/GraphDialog.js').then((m) => ({ default: m.GraphDialog })));
 
 /** Catches a failed chunk load (or a crash in the dialog), so it cannot unmount the whole app. */
 class GraphBoundary extends Component<{ onError(error: unknown): void; children: ReactNode }, { failed: boolean }> {

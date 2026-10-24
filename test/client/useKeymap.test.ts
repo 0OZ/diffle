@@ -16,7 +16,7 @@ const api = {
 vi.mock('@/client/api.js', () => ({ api }));
 
 const { useStore } = await import('@/client/store.js');
-const { IDLE_GRAPH } = await import('@/client/connected/focus.js');
+const { IDLE_GRAPH } = await import('@/client/connected/clusters/focus.js');
 const { hasModifier, useKeymap } = await import('@/client/keyboard/useKeymap.js');
 
 function Keys() {

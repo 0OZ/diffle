@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { copyText } from '@/client/clipboard.js';
-import { CONNECTED_COUNTED, CONNECTED_KEYS } from '@/client/connected/keys.js';
+import { CONNECTED_COUNTED, CONNECTED_KEYS } from '@/client/connected/clusters/keys.js';
 import { api } from '@/client/api.js';
 import { clearWordFocus, focusedWord, moveWord, moveWordToEdge, scrollCursorInline } from '@/client/lsp/wordNav.js';
 import { currentPath, MODE_PANES } from '@/client/model.js';

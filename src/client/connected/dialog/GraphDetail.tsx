@@ -1,10 +1,10 @@
 import { ArrowRight } from 'lucide-react';
 import type { GraphUse } from '@/shared/protocol.js';
 import { Button } from '@/client/ui/Button.js';
-import { GRAPH_HOW_TO, arrowSentence, plural } from '@/client/connected/copy.js';
-import { STATUS, kindGlyph } from './glyphs.js';
-import type { GraphLayout, PlacedNode, RoutedEdge } from './layout.js';
-import { edgeTitle, type Selection } from './view.js';
+import { GRAPH_HOW_TO, arrowSentence, plural } from '@/client/connected/clusters/copy.js';
+import { STATUS, kindGlyph } from '@/client/connected/graph/glyphs.js';
+import type { GraphLayout, PlacedNode, RoutedEdge } from '@/client/connected/graph/layout.js';
+import { edgeTitle, type Selection } from '@/client/connected/graph/view.js';
 
 /** Links named in the overview; the rest are in the graph. */
 export const STRONGEST_SHOWN = 5;

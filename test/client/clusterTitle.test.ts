@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { GraphCluster, GraphLink } from '@/shared/protocol.js';
-import { clusterTitle } from '@/client/connected/clusterTitle.js';
-import { isTestPath } from '@/client/connected/testPath.js';
+import { clusterTitle } from '@/client/connected/clusters/clusterTitle.js';
+import { isTestPath } from '@/client/connected/clusters/testPath.js';
 
 const link = (from: string, to: string, weight = 1): GraphLink => ({
   from,

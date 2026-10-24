@@ -1,6 +1,6 @@
 import type { GraphCluster, GraphContext, GraphUse } from '@/shared/protocol.js';
-import type { GraphState } from '@/client/connected/focus.js';
-import { isTestPath } from '@/client/connected/testPath.js';
+import type { GraphState } from '@/client/connected/clusters/focus.js';
+import { isTestPath } from '@/client/connected/clusters/testPath.js';
 
 export type NodeStatus = 'added' | 'modified' | 'deleted' | 'renamed' | 'context';
 
