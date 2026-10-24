@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::assemble::SymbolKey;
 use super::changed::{Spans, changed_symbols};
 use super::limits::{Deadline, Limits};
+use super::moved::{Edits, unmoved};
 use super::settle::{MAX_IN_FLIGHT, is_fatal, quiet};
 use super::source::SymbolSource;
 use super::tally::Tally;
@@ -44,14 +45,16 @@ enum Outlined {
 
 /// The outline of every path that has changed lines, retrying once those a busy server left empty.
 /// The files that cannot be outlined join `tally.other`, with the reason where there is one.
+/// `witnesses` are files left out of the graph whose removed code may have moved into `paths`.
 pub async fn outline_all<S: SymbolSource>(
     source: &S,
     paths: &[&str],
+    witnesses: &[&str],
     limits: &Limits,
     deadline: &Deadline,
     tally: &mut Tally,
 ) -> Result<BTreeMap<String, Outline>> {
-    let lines = read_lines(source, paths, deadline, tally).await?;
+    let lines = read_lines(source, paths, witnesses, deadline, tally).await?;
     let mut outlines = BTreeMap::new();
     let asked = lines.keys().cloned().collect::<Vec<_>>();
     let first = outline_each(source, &asked, &lines, deadline).await?;
@@ -69,16 +72,18 @@ pub async fn outline_all<S: SymbolSource>(
 }
 
 /// The changed lines of each path, read in batches. A path no longer changed, or not read before
-/// the deadline, is set aside.
+/// the deadline, is set aside. Moves are decided once every batch is in, over the whole diff: a block
+/// can leave a file of one batch and land in a file of another. Hashes of lines are all that is held.
 async fn read_lines<S: SymbolSource>(
     source: &S,
     paths: &[&str],
+    witnesses: &[&str],
     deadline: &Deadline,
     tally: &mut Tally,
 ) -> Result<BTreeMap<String, BTreeSet<u32>>> {
-    let mut lines = BTreeMap::new();
+    let mut edits = BTreeMap::new();
     for batch in paths.chunks(PATCH_BATCH) {
-        let read = deadline.within(source.changed_lines(batch)).await;
+        let read = deadline.within(source.edits(batch)).await;
         let mut read = match read {
             Some(read) => read?,
             None => {
@@ -89,7 +94,7 @@ async fn read_lines<S: SymbolSource>(
         for path in batch {
             match read.remove(*path) {
                 Some(changed) => {
-                    lines.insert((*path).to_owned(), changed);
+                    edits.insert((*path).to_owned(), changed);
                 }
                 None => {
                     tally.other.insert((*path).to_owned());
@@ -97,7 +102,17 @@ async fn read_lines<S: SymbolSource>(
             }
         }
     }
-    Ok(lines)
+    let mut removed_from = Vec::new();
+    // With nothing to graph, there is nothing a move could change.
+    let witnesses = if edits.is_empty() { &[] } else { witnesses };
+    for batch in witnesses.chunks(PATCH_BATCH) {
+        // Best effort: a deadline here leaves a move unseen, never a file out of the graph.
+        let Some(read) = deadline.within(source.edits(batch)).await else { break };
+        removed_from.extend(read?.into_values());
+    }
+    let whole_diff: Vec<&Edits> = edits.values().chain(&removed_from).collect();
+    let left = unmoved(&whole_diff);
+    Ok(edits.keys().cloned().zip(left).collect())
 }
 
 async fn outline_each<S: SymbolSource>(

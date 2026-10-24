@@ -15,6 +15,9 @@ use crate::protocol::{
     ChangeStatus, ChangedFile, GraphResponse, LanguageId, LspPosition, LspSymbol, Snapshot, language_of,
 };
 
+/// How rust-analyzer's outline names an impl block: `impl Kind`, `impl<T> Kind<T>`.
+const IMPL_KEYWORD: &str = "impl";
+
 /// The graph of `snap`, and whether a later build could find more of it.
 pub async fn build<S: SymbolSource>(
     source: &S,
@@ -43,15 +46,17 @@ pub async fn collect<S: SymbolSource>(source: &S, snap: &Snapshot, limits: &Limi
         return Ok(tally.into_gathered(snap, Vec::new(), Found::default(), &deadline));
     }
     let (candidates, reasons) = candidates(source, &changed, &mut tally);
-    let outlines = outline_all(source, &candidates, limits, &deadline, &mut tally).await?;
+    let outlines = outline_all(source, &candidates, &witnesses(&changed), limits, &deadline, &mut tally).await?;
     // Reasons a file with a language was refused explain the graph only when nothing was graphed.
     if outlines.is_empty() && !reasons.is_empty() {
         tally.notes.merge(reasons);
         tally.degraded = true;
     }
-    let mut subjects: Vec<Subject> = outlines.iter().flat_map(|(path, o)| subjects_of(path, &o.changed)).collect();
+    let declared: Vec<Subject> = outlines.iter().flat_map(|(path, o)| subjects_of(path, &o.changed)).collect();
+    // An impl block still names the symbol a use sits in; only its type is asked what uses it.
+    let changed_keys: BTreeSet<SymbolKey> = declared.iter().map(|s| s.key.clone()).collect();
+    let mut subjects: Vec<Subject> = declared.into_iter().filter(|s| !is_impl_block(&s.key)).collect();
     let all_symbols = subjects.len();
-    let changed_keys: BTreeSet<SymbolKey> = subjects.iter().map(|s| s.key.clone()).collect();
     if all_symbols > limits.symbols {
         tally
             .notes
@@ -116,10 +121,25 @@ fn candidates<'a, S: SymbolSource>(
     (candidates, reasons)
 }
 
+/// Deleted source files: not graphed, but what they held may have moved into a graphed file.
+fn witnesses<'a>(changed: &BTreeMap<&'a str, &ChangedFile>) -> Vec<&'a str> {
+    let read = |file: &ChangedFile| {
+        file.status == ChangeStatus::D && !file.binary && !file.generated && file.submodule != Some(true)
+    };
+    changed.iter().filter(|(path, file)| read(file) && language_of(path).is_some()).map(|(path, _)| *path).collect()
+}
+
 /// The language of a file a language server could outline at all: a text file that still exists.
 fn graphable_language(file: &ChangedFile) -> Option<LanguageId> {
     let live = file.status != ChangeStatus::D && !file.binary && !file.generated && file.submodule != Some(true);
     live.then(|| language_of(&file.path)).flatten()
+}
+
+/// rust-analyzer lists `impl Kind` beside `Kind` and points both at the type's name, so asking both
+/// reports one use twice. The impl's methods are separate symbols and stay asked.
+fn is_impl_block(key: &SymbolKey) -> bool {
+    let named_so = key.name.strip_prefix(IMPL_KEYWORD).is_some_and(|rest| rest.starts_with([' ', '<']));
+    named_so && language_of(&key.path) == Some(LanguageId::Rust)
 }
 
 fn subjects_of(path: &str, changed: &[LspSymbol]) -> Vec<Subject> {
@@ -462,5 +482,176 @@ mod tests {
         let got = gathered_of(&source, &modified(&refs), &refs, &QUICK).await;
         assert_eq!(got.facts.files.len(), 250);
         assert_eq!(*source.batches.lock().unwrap(), [100, 100, 50]);
+    }
+
+    /// A line that carries enough text to be a move on its own.
+    fn code(n: usize) -> String {
+        format!("    let value_{n} = compute_total(items, {n});")
+    }
+
+    fn block(range: std::ops::Range<usize>) -> Vec<String> {
+        range.map(code).collect()
+    }
+
+    /// A hunk that adds `text` from new-side line `at`.
+    fn added(at: u32, text: &[String]) -> String {
+        let body: String = text.iter().map(|l| format!("+{l}\n")).collect();
+        format!("@@ -{},0 +{at},{} @@\n{body}", at - 1, text.len())
+    }
+
+    /// A hunk that removes `text`; the line after it is now at `at`.
+    fn removed(at: u32, text: &[String]) -> String {
+        let body: String = text.iter().map(|l| format!("-{l}\n")).collect();
+        format!("@@ -{at},{} +{at},0 @@\n{body} context\n", text.len())
+    }
+
+    /// The patch of a file deleted with `text` in it.
+    fn deleted(text: &[String]) -> String {
+        let body: String = text.iter().map(|l| format!("-{l}\n")).collect();
+        format!("@@ -1,{} +0,0 @@\n{body}", text.len())
+    }
+
+    fn counts(facts: &Facts) -> Vec<(&str, u32)> {
+        facts.files.iter().map(|f| (f.path.as_str(), f.symbols)).collect()
+    }
+
+    /// `home.py` loses a block that lands in `new.py`; both files hold a symbol around where it was.
+    fn moved_pair(landed: &[String]) -> Fake {
+        Fake::default().patched("home.py", &removed(3, &block(0..4)), vec![sym("home.py", "stay", 12, 1, 9)]).patched(
+            "new.py",
+            &added(2, landed),
+            vec![sym("new.py", "arrived", 12, 1, 9)],
+        )
+    }
+
+    #[tokio::test]
+    async fn code_that_only_moved_between_files_marks_no_symbol_changed_on_either_side() {
+        let source = moved_pair(&block(0..4));
+        let facts = facts_of(&source, &modified(&["home.py", "new.py"]), &["home.py", "new.py"]).await;
+        assert_eq!(counts(&facts), [("home.py", 0), ("new.py", 0)]);
+        assert!(source.asked.lock().unwrap().is_empty(), "no changed symbol, nothing to ask about");
+    }
+
+    #[tokio::test]
+    async fn a_moved_block_that_was_also_edited_keeps_its_symbol_changed_and_its_arrows() {
+        let mut edited = block(0..4);
+        edited[2] = code(99);
+        let source = moved_pair(&edited).file("user.py", &[2], vec![sym("user.py", "caller", 12, 1, 3)]).replies(
+            "new.py",
+            1,
+            vec![Reply::Found(vec![loc("user.py", 2)])],
+        );
+        let files = ["home.py", "new.py", "user.py"];
+        let facts = facts_of(&source, &modified(&files), &files).await;
+        assert_eq!(edges(&facts), ["new.py#1:arrived <- user.py#1:caller"]);
+        assert_eq!(counts(&facts)[1], ("new.py", 1));
+    }
+
+    #[tokio::test]
+    async fn a_move_between_files_read_in_different_batches_is_still_a_move() {
+        let names: Vec<String> = (0..150).map(|i| format!("m{i:03}.py")).collect();
+        let mut source = names.iter().fold(Fake::default(), |s, n| s.file(n, &[2], vec![sym(n, "f", 12, 1, 3)]));
+        source = source.patched("m000.py", &removed(3, &block(0..4)), vec![sym("m000.py", "f", 12, 1, 9)]).patched(
+            "m149.py",
+            &added(2, &block(0..4)),
+            vec![sym("m149.py", "f", 12, 1, 9)],
+        );
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let facts = facts_of(&source, &modified(&refs), &refs).await;
+        assert_eq!(*source.batches.lock().unwrap(), [100, 50], "the two files sit in different batches");
+        let silent: Vec<&str> = counts(&facts).into_iter().filter(|(_, n)| *n == 0).map(|(p, _)| p).collect();
+        assert_eq!(silent, ["m000.py", "m149.py"]);
+    }
+
+    #[tokio::test]
+    async fn a_file_whose_every_change_moved_is_still_listed_and_lands_with_the_unlinked() {
+        let source = moved_pair(&block(0..4));
+        let facts = facts_of(&source, &modified(&["home.py", "new.py"]), &["home.py", "new.py"]).await;
+        assert_eq!(counts(&facts), [("home.py", 0), ("new.py", 0)]);
+        let graph = crate::graph::assemble::assemble(facts);
+        assert_eq!(
+            (graph.unlinked, graph.other, graph.clusters.len()),
+            (vec!["home.py".into(), "new.py".into()], vec![], 0)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_deleted_file_is_not_read_when_nothing_is_graphed() {
+        let mut source = Fake::default().patched("gone.py", &deleted(&block(0..4)), vec![]);
+        source.blocked.insert("a.py".into(), "No language server for python on PATH".into());
+        let changed = [change("gone.py", "D", false, false), change("a.py", "M", false, false)];
+        let facts = facts_of(&source, &changed, &["a.py"]).await;
+        assert_eq!((facts.files.len(), source.batches.lock().unwrap().len()), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn code_moved_out_of_a_deleted_file_is_a_move_too() {
+        let source = Fake::default().patched("gone.py", &deleted(&block(0..4)), vec![]).patched(
+            "new.py",
+            &added(2, &block(0..4)),
+            vec![sym("new.py", "arrived", 12, 1, 9)],
+        );
+        let changed = [change("gone.py", "D", false, false), change("new.py", "M", false, false)];
+        let facts = facts_of(&source, &changed, &["new.py"]).await;
+        assert_eq!(counts(&facts), [("new.py", 0)]);
+        assert_eq!(facts.other, ["gone.py"]);
+    }
+
+    /// What rust-analyzer lists for `enum Kind` and the `impl Kind` beside it.
+    fn kind_and_its_impl(path: &str) -> Vec<LspSymbol> {
+        let method = LspSymbol { container: Some("impl Kind".into()), ..sym(path, "label", 12, 6, 7) };
+        vec![sym(path, "Kind", 10, 1, 3), sym(path, "impl Kind", 19, 5, 8), method]
+    }
+
+    #[tokio::test]
+    async fn an_impl_block_beside_its_type_is_not_a_second_used_symbol() {
+        // Both positions answer with the type's uses, as the real server does.
+        let uses = || vec![Reply::Found(vec![loc("user.rs", 2)])];
+        let source = Fake::default()
+            .file("kind.rs", &[2, 5], kind_and_its_impl("kind.rs"))
+            .file("user.rs", &[2], vec![sym("user.rs", "caller", 12, 1, 3)])
+            .replies("kind.rs", 1, uses())
+            .replies("kind.rs", 5, uses());
+        let files = ["kind.rs", "user.rs"];
+        let facts = facts_of(&source, &modified(&files), &files).await;
+        assert_eq!(edges(&facts), ["kind.rs#1:Kind <- user.rs#1:caller"]);
+        assert_eq!(source.asked_at("kind.rs", 5), 0, "the impl is not asked what uses it");
+    }
+
+    #[tokio::test]
+    async fn an_impl_block_is_still_the_user_of_the_types_in_its_header() {
+        // `impl From<Kind> for Thing` at user.rs line 1 mentions `Kind`, declared in kind.rs.
+        let header = sym("user.rs", "impl From<Kind> for Thing", 19, 1, 4);
+        let source = Fake::default()
+            .file("kind.rs", &[2], vec![sym("kind.rs", "Kind", 10, 1, 3)])
+            .file("user.rs", &[1], vec![header])
+            .replies("kind.rs", 1, vec![Reply::Found(vec![loc("user.rs", 1)])]);
+        let files = ["kind.rs", "user.rs"];
+        let facts = facts_of(&source, &modified(&files), &files).await;
+        assert_eq!(edges(&facts), ["kind.rs#1:Kind <- user.rs#1:impl From<Kind> for Thing"]);
+        assert_eq!(source.asked_at("user.rs", 1), 0, "as the user it is looked up in, not asked about");
+    }
+
+    #[tokio::test]
+    async fn the_methods_of_an_impl_block_stay_subjects() {
+        let source = Fake::default()
+            .file("kind.rs", &[1, 6], kind_and_its_impl("kind.rs"))
+            .file("user.rs", &[2], vec![sym("user.rs", "caller", 12, 1, 3)])
+            .replies("kind.rs", 6, vec![Reply::Found(vec![loc("user.rs", 2)])]);
+        let files = ["kind.rs", "user.rs"];
+        let facts = facts_of(&source, &modified(&files), &files).await;
+        assert_eq!(edges(&facts), ["kind.rs#6:label <- user.rs#1:caller"]);
+    }
+
+    #[tokio::test]
+    async fn only_rust_names_an_impl_block_so() {
+        // A python function called `impl Kind` is a symbol like any other.
+        let source = Fake::default()
+            .file("kind.py", &[2], vec![sym("kind.py", "impl Kind", 12, 1, 3)])
+            .file("user.py", &[2], vec![sym("user.py", "caller", 12, 1, 3)])
+            .replies("kind.py", 1, vec![Reply::Found(vec![loc("user.py", 2)])]);
+        let files = ["kind.py", "user.py"];
+        let facts = facts_of(&source, &modified(&files), &files).await;
+        assert_eq!(edges(&facts), ["kind.py#1:impl Kind <- user.py#1:caller"]);
     }
 }
