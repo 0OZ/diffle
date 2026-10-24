@@ -6,6 +6,14 @@ import {
   keepSelection,
   STRONGEST_SHOWN,
 } from '@/client/connected/dialog/GraphDetail.js';
+import {
+  CHIPS_SHOWN,
+  EMPTY_TEXT,
+  LIST_CAP,
+  chipsOf,
+  listToggleLabel,
+  visibleRows,
+} from '@/client/connected/dialog/LinkList.js';
 import type { GraphLayout, PlacedNode, RoutedEdge } from '@/client/connected/graph/layout.js';
 
 const node = (id: string, extra: Partial<PlacedNode> = {}): PlacedNode => ({
@@ -118,5 +126,108 @@ describe('exampleOf', () => {
 
   it('is null when the graph has no arrow', () => {
     expect(exampleOf([])).toBeNull();
+  });
+});
+
+describe('detailOf with test files', () => {
+  // One file used by two sources and two tests, and using one source and one test; strengths are mixed on purpose.
+  const mixed: GraphLayout = {
+    nodes: [
+      node('hub'),
+      node('src/a'),
+      node('src/b'),
+      node('t/a_test', { test: true }),
+      node('t/b_test', { test: true }),
+      node('lib/x'),
+      node('lib/x_test', { test: true }),
+    ],
+    edges: [
+      edge('t/a_test', 'hub', 9),
+      edge('src/a', 'hub', 2),
+      edge('t/b_test', 'hub', 5),
+      edge('src/b', 'hub', 3),
+      edge('hub', 'lib/x_test', 8),
+      edge('hub', 'lib/x', 1),
+    ],
+    width: 0,
+    height: 0,
+  };
+  const hub = () => {
+    const d = detailOf(mixed, { kind: 'node', id: 'hub' });
+    if (d.kind !== 'node') throw new Error('expected a node');
+    return d;
+  };
+
+  it('lists source callers before test callers, each group strongest first', () => {
+    expect(hub().usedBy.map((r) => r.from.id)).toEqual(['src/b', 'src/a', 't/a_test', 't/b_test']);
+  });
+
+  it('lists the source files a file uses before its tests', () => {
+    expect(hub().uses.map((r) => r.to.id)).toEqual(['lib/x', 'lib/x_test']);
+  });
+
+  it('breaks ties by arrow id and does not depend on the input order', () => {
+    const tied: GraphLayout = { ...mixed, edges: mixed.edges.map((e) => ({ ...e, weight: 1 })) };
+    const reversed: GraphLayout = { ...tied, edges: [...tied.edges].reverse() };
+    const a = detailOf(tied, { kind: 'node', id: 'hub' });
+    const b = detailOf(reversed, { kind: 'node', id: 'hub' });
+    if (a.kind !== 'node' || b.kind !== 'node') throw new Error('expected a node');
+    expect(a.usedBy.map((r) => r.from.id)).toEqual(['src/a', 'src/b', 't/a_test', 't/b_test']);
+    expect(b.usedBy.map((r) => r.from.id)).toEqual(a.usedBy.map((r) => r.from.id));
+  });
+
+  it('keeps the overview strongest-first, tests and all', () => {
+    const d = detailOf(mixed, null);
+    if (d.kind !== 'overview') throw new Error('expected the overview');
+    expect(d.strongest.map((r) => r.edge.weight)).toEqual([9, 8, 5, 3, 2]);
+  });
+});
+
+describe('chipsOf', () => {
+  const use = (symbol: string) => ({ symbol, kind: 12, path: 'p', lines: [1] });
+
+  it('shows at most the first few symbols and counts exactly the rest', () => {
+    const uses = ['a', 'b', 'c', 'd', 'e'].map(use);
+    const c = chipsOf({ uses, total: 9 });
+    expect(c.shown.map((u) => u.symbol)).toEqual(['a', 'b', 'c']);
+    expect(c.more).toBe(6);
+    expect(c.shown.length + c.more).toBe(9);
+  });
+
+  it('counts nothing more when every symbol fits', () => {
+    expect(chipsOf({ uses: [use('a'), use('b')], total: 2 }).more).toBe(0);
+    expect(chipsOf({ uses: ['a', 'b', 'c'].map(use), total: 3 })).toMatchObject({ more: 0 });
+    expect(CHIPS_SHOWN).toBe(3);
+  });
+
+  it('never reports a negative count', () => {
+    expect(chipsOf({ uses: [use('a')], total: 0 }).more).toBe(0);
+  });
+});
+
+describe('visibleRows', () => {
+  const rows = (n: number) => Array.from({ length: n }, (_, i) => i);
+
+  it('shows every row up to the cap, with no disclosure', () => {
+    expect(visibleRows(rows(LIST_CAP), false)).toEqual({ rows: rows(LIST_CAP), folded: 0 });
+    expect(visibleRows(rows(2), false).folded).toBe(0);
+  });
+
+  it('folds the rows past the cap until the list is expanded', () => {
+    const v = visibleRows(rows(9), false);
+    expect(v.rows).toEqual(rows(LIST_CAP));
+    expect(v.folded).toBe(3);
+    expect(visibleRows(rows(9), true)).toEqual({ rows: rows(9), folded: 0 });
+  });
+
+  it('labels its one button with the whole count, then with fewer', () => {
+    expect(listToggleLabel(9, false)).toBe('Show all 9');
+    expect(listToggleLabel(9, true)).toBe('Show fewer');
+  });
+});
+
+describe('empty text', () => {
+  it('says why a list is empty, in plain words', () => {
+    expect(EMPTY_TEXT).toEqual({ to: 'It uses nothing else drawn.', from: 'Nothing drawn uses it.' });
   });
 });

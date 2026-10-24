@@ -1,4 +1,6 @@
-import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures.js';
 import { activePath, filePaths, gotoFile } from './browser.js';
@@ -56,7 +58,7 @@ async function openGraph(page: Page, url: string): Promise<void> {
 
 /** The names of the files a detail section (Uses, Used by) lists, in order. */
 const listed = (page: Page, section: 'Uses' | 'Used by') =>
-  details(page).getByRole('region', { name: section }).getByRole('button').locator('span.font-medium');
+  details(page).getByRole('region', { name: section }).getByRole('button').locator('span.font-medium > span.truncate');
 
 test.describe('the Connected graph over a scripted code graph', () => {
   test.use({
@@ -111,7 +113,7 @@ test.describe('the Connected graph over a scripted code graph', () => {
     await expect(card(page, 'ledger.py')).toHaveAttribute('aria-pressed', 'true');
     await expect(details(page)).toContainText('ledger.py');
     await expect(listed(page, 'Uses')).toHaveText(['currency.py', 'refunds.py']);
-    await expect(listed(page, 'Used by')).toHaveText(['test_ledger.py', 'refunds.py', 'test_refunds.py']);
+    await expect(listed(page, 'Used by')).toHaveText(['refunds.py', 'test_ledger.py', 'test_refunds.py']);
     await expect(page).toHaveScreenshot('graph-selected.png');
 
     // ArrowRight follows an arrow out to the used file nearest in height, ArrowLeft back to a file that uses it.
@@ -132,7 +134,7 @@ test.describe('the Connected graph over a scripted code graph', () => {
     await card(page, 'ledger.py').focus();
     await details(page)
       .getByRole('region', { name: 'Used by' })
-      .getByRole('button', { name: /^refunds\.py/ })
+      .getByRole('button', { name: /^Added: refunds\.py/ })
       .click();
     await expect(details(page).getByRole('heading', { level: 3 })).toContainText('refunds.py');
     const symbols = details(page).getByRole('region', { name: 'Symbols' });
@@ -198,7 +200,7 @@ test.describe('the Connected graph over a scripted code graph', () => {
     await page.keyboard.press('Space');
     await details(page)
       .getByRole('region', { name: 'Used by' })
-      .getByRole('button', { name: /^refunds\.py/ })
+      .getByRole('button', { name: /^Added: refunds\.py/ })
       .click();
     await expect(details(page).getByRole('heading', { level: 3 })).toHaveText(
       'refunds.py uses Entry and Kind from ledger.py',
@@ -386,6 +388,161 @@ test.describe('the Connected graph over a scripted code graph', () => {
       await expect(dialog(page).getByRole('status')).toHaveText(/^ledger\.py selected: uses 2 files, used by 3 files$/);
       await expect(details(page).getByRole('button', { name: 'Open in review' })).toBeVisible();
       await expect(page).toHaveScreenshot('graph-narrow.png');
+    });
+  });
+});
+
+// A second scripted graph (connectedGraphMany.graph.json) over a repository with more files: ledger.py is used by
+// four source files (two of them named util.py, one under a long path) and five tests, so its panel folds.
+const MANY_SOURCES = ['tally/a/util.py', 'tally/adapters/storage/postgres/migrations/b/util.py', 'tally/report.py'];
+const MANY_TESTS = ['tests/test_report.py', 'tests/test_export.py', 'tests/test_audit.py'];
+const MANY_FILES = 11;
+const MANY_ROW = /, 11 changed files, 0 unchanged callers$/;
+
+/** A small Python module that references Entry (line 7) and parse_row (line 6), where the script points. */
+const caller = (fn: string): string =>
+  `"""${fn}."""\nfrom tally.ledger import Entry, parse_row\n\n\ndef ${fn}(rows):\n    entries = [parse_row(r) for r in rows]\n    return [e for e in entries if isinstance(e, Entry)]\n`;
+
+/** The panel's scroll is set, not eased, so the picture does not depend on when it is taken. */
+const scrollPanelToEnd = (page: Page) => details(page).evaluate((el) => void (el.scrollTop = el.scrollHeight));
+
+const manyTest = test.extend({
+  // The files are committed on the branch under review, so the default comparison shows them as added.
+  repo: async ({ repo }, use) => {
+    for (const path of [...MANY_SOURCES, ...MANY_TESTS]) {
+      await mkdir(dirname(join(repo, path)), { recursive: true });
+      await writeFile(join(repo, path), caller(path.replace(/^.*\//, '').replace('.py', '').replace('util', 'total')));
+    }
+    // A fixed date, so the commit's hash (shown behind the dialog) is the same on every run.
+    const date = '2026-01-15T12:00:00Z';
+    const env = { ...process.env, GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date };
+    const git = (...args: string[]) =>
+      execFileSync(
+        'git',
+        ['-c', 'user.name=ada', '-c', 'user.email=ada@example.com', '-c', 'commit.gpgsign=false', ...args],
+        { cwd: repo, env, stdio: 'ignore' },
+      );
+    git('add', ...MANY_SOURCES, ...MANY_TESTS);
+    git('commit', '-q', '-m', 'feat: more callers of the ledger');
+    await use(repo);
+  },
+});
+
+manyTest.describe('a file with more callers than the panel lists at once', () => {
+  manyTest.use({
+    args: [
+      '--lsp',
+      `python=${JSON.stringify(process.execPath)} ${JSON.stringify(join(REPO_ROOT, 'test/lsp/fake-lsp.mjs'))}`,
+    ],
+    env: { PATH: '/usr/bin:/bin', FAKE_LSP_GRAPH: join(REPO_ROOT, 'test/e2e/connectedGraphMany.graph.json') },
+  });
+
+  /** Open the graph, select ledger.py and return its "Used by" list. */
+  async function selectLedger(page: Page, url: string) {
+    await waitForLsp(url);
+    await page.getByRole('button', { name: 'Connected', exact: true }).click();
+    await expect(group(page, MANY_ROW)).toHaveAttribute('aria-current', 'true');
+    await graphButton(page).click();
+    await expect(dialog(page).locator('[data-node-id]')).toHaveCount(MANY_FILES);
+    await card(page, 'ledger.py').focus();
+    await page.keyboard.press('Space');
+    return details(page).getByRole('region', { name: 'Used by' });
+  }
+
+  manyTest(
+    'lists sources before tests, names each file’s folder, and folds the rest behind one button',
+    async ({ page, diffle }) => {
+      const usedBy = await selectLedger(page, diffle.url);
+      const names = usedBy.getByRole('listitem').locator('span.font-medium > span.truncate');
+      const more = usedBy.getByRole('button', { name: /^Show (all 9|fewer)$/ });
+
+      // Six of the nine rows: all four sources, then the two strongest tests.
+      await expect(usedBy.getByRole('heading', { level: 4 })).toHaveText('Used by (9)');
+      await expect(names).toHaveCount(6);
+      const first = await names.allTextContents();
+      expect(first.slice(0, 4).sort()).toEqual(['refunds.py', 'report.py', 'util.py', 'util.py']);
+      expect(first.slice(4).every((n) => n.startsWith('test_'))).toBe(true);
+      // The folder sits under the name, so the two util.py differ.
+      const dirs = usedBy.getByRole('listitem').locator('bdi');
+      await expect(dirs.filter({ hasText: /^tally\/a$/ })).toHaveCount(1);
+      const long = dirs.filter({ hasText: /^tally\/adapters\/storage\/postgres\/migrations\/b$/ });
+      await expect(long).toHaveCount(1);
+      // A path too long for its line loses its start, not its end: the part that tells the files apart stays.
+      const clipped = await long.evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        const room = el.parentElement!.getBoundingClientRect();
+        return { startCut: box.left < room.left - 1, endShown: box.right <= room.right + 1 };
+      });
+      expect(clipped).toEqual({ startCut: true, endShown: true });
+      // A test row carries the tag; the accessible name says "test", and the status is text too.
+      await expect(usedBy.getByRole('button', { name: /^Added: test_\w+\.py test / }).first()).toBeVisible();
+      await expect(usedBy.getByText('test', { exact: true })).toHaveCount(2);
+      // Three symbols at most, then the exact rest: Entry and parse_row are all that links a source to ledger.py.
+      await expect(usedBy.getByRole('button', { name: /^Added: report\.py / })).toContainText('Entry');
+      await expect(more).toHaveText('Show all 9');
+      await expect(more).toHaveAttribute('aria-expanded', 'false');
+      await scrollPanelToEnd(page);
+      await expect(page).toHaveScreenshot('graph-used-by.png');
+
+      // The keyboard: Tab from the last row lands on the button, Enter opens and closes it, focus stays.
+      await names.nth(5).locator('xpath=ancestor::button').focus();
+      await page.keyboard.press('Tab');
+      await expect(more).toBeFocused();
+      await page.keyboard.press('Enter');
+      await expect(more).toHaveText('Show fewer');
+      await expect(more).toHaveAttribute('aria-expanded', 'true');
+      await expect(more).toBeFocused();
+      await expect(names).toHaveCount(9);
+      const all = await names.allTextContents();
+      expect(all.slice(0, 4).every((n) => !n.startsWith('test_'))).toBe(true);
+      expect(all.slice(4).every((n) => n.startsWith('test_'))).toBe(true);
+      // The canvas keys are not the panel's: an arrow key on the button neither moves nor swallows focus.
+      await page.keyboard.press('ArrowRight');
+      await expect(more).toBeFocused();
+      await scrollPanelToEnd(page);
+      await expect(page).toHaveScreenshot('graph-used-by-all.png');
+      await page.keyboard.press('Space');
+      await expect(more).toHaveText('Show all 9');
+      await expect(more).toBeFocused();
+      await expect(names).toHaveCount(6);
+
+      // A row drills into its arrow; the panel then shows the sentence, and the selection resets the fold.
+      await usedBy.getByRole('button', { name: /^Added: report\.py / }).click();
+      await expect(details(page).getByRole('heading', { level: 3 })).toHaveText(
+        /^report\.py uses Entry and parse_row from ledger\.py$/,
+      );
+    },
+  );
+
+  manyTest('says why a list is empty, and offers no button for a short one', async ({ page, diffle }) => {
+    await selectLedger(page, diffle.url);
+    await card(page, 'test_export.py').focus();
+    await page.keyboard.press('Space');
+    const usedBy = details(page).getByRole('region', { name: 'Used by' });
+    await expect(usedBy).toContainText('Nothing drawn uses it.');
+    await expect(usedBy.getByRole('button')).toHaveCount(0);
+    const uses = details(page).getByRole('region', { name: 'Uses' });
+    await expect(uses.getByRole('button', { name: /^Modified: ledger\.py/ })).toBeVisible();
+    await expect(uses.getByRole('button', { name: /Show/ })).toHaveCount(0);
+  });
+
+  manyTest.describe('in the dark theme', () => {
+    manyTest.use({ colorScheme: 'dark' });
+
+    manyTest('keeps its contrast', async ({ page, diffle }) => {
+      const usedBy = await selectLedger(page, diffle.url);
+      await usedBy.getByRole('button', { name: 'Show all 9' }).click();
+      await scrollPanelToEnd(page);
+      await expect(page).toHaveScreenshot('graph-used-by-dark.png');
+    });
+  });
+
+  manyTest.describe('in a narrow window', () => {
+    manyTest.use({ viewport: { width: 800, height: 900 } });
+
+    manyTest('stays readable under the canvas', async ({ page, diffle }) => {
+      await selectLedger(page, diffle.url);
+      await expect(page).toHaveScreenshot('graph-used-by-narrow.png');
     });
   });
 });
