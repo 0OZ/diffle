@@ -36,16 +36,20 @@ fn repo() -> TestRepo {
     t
 }
 
-fn script(t: &TestRepo) -> String {
+/// The graph the fake serves for `repo()`: what `alpha` uses and where.
+fn repo_graph() -> Value {
     let outline = |name: &str| json!([{ "name": name, "kind": 12, "line": 1, "endLine": 2, "col": 4 }]);
-    let graph = json!({
+    json!({
         "outlines": { "a.py": outline("alpha"), "b.py": outline("beta"), "c.py": outline("gamma"), "d.py": outline("delta") },
         "references": { "a.py:1:4": [
             { "path": "a.py", "line": 1, "col": 4 },
             { "path": "b.py", "line": 2, "col": 4 },
             { "path": "caller.py", "line": 4, "col": 8 },
         ] },
-    });
+    })
+}
+
+fn script(t: &TestRepo, graph: &Value) -> String {
     let path = t.path.join(".fake-graph.json");
     std::fs::write(&path, graph.to_string()).unwrap();
     path.to_string_lossy().into_owned()
@@ -66,8 +70,19 @@ async fn serve_env(
     overrides: &[(LanguageId, &str)],
     extra: &[(&str, &str)],
 ) -> Option<TestServer> {
+    serve_graph(t, &repo_graph(), req, overrides, extra).await
+}
+
+/// The fake served `graph`, a script of outlines and references.
+async fn serve_graph(
+    t: TestRepo,
+    graph: &Value,
+    req: EnterRequest,
+    overrides: &[(LanguageId, &str)],
+    extra: &[(&str, &str)],
+) -> Option<TestServer> {
     fake_servers()?;
-    let graph = script(&t);
+    let graph = script(&t, graph);
     let vars: Vec<(&str, &str)> =
         [("FAKE_LSP_GRAPH", graph.as_str())].into_iter().chain(extra.iter().copied()).collect();
     fake_env(&t.path, Some("fake"), &vars);
@@ -86,6 +101,13 @@ async fn queries(s: &TestServer) -> usize {
     let process = s.lsp.as_ref().unwrap().server("fake").unwrap().bridge.process().clone();
     flush(&process).await;
     events(&process).iter().filter(|e| e.starts_with("references ")).count()
+}
+
+/// The positions the fake was asked for references at, as `path:line:col`.
+async fn asked(s: &TestServer) -> Vec<String> {
+    let process = s.lsp.as_ref().unwrap().server("fake").unwrap().bridge.process().clone();
+    flush(&process).await;
+    events(&process).iter().filter_map(|e| e.strip_prefix("references ")).map(str::to_owned).collect()
 }
 
 async fn version(s: &TestServer) -> i64 {
@@ -223,5 +245,130 @@ async fn a_snapshot_that_is_not_the_checkout_degrades_to_other() {
     assert_eq!(got["unlinked"], json!([]));
     // HEAD~1^! shows the base commit, which added all seven files.
     assert_eq!(got["other"], json!(["a.py", "b.py", "c.py", "caller.py", "d.py", "gone.py", "notes.md"]));
+    s.close().await;
+}
+
+const KIND: &str = "class Kind:\n    NAME = \"kind\"\n    def label(self):\n        return \"label for kind\"\n    def code(self):\n        return \"code for kind\"\n";
+
+/// `home.py` hands the class `Kind` over to `lifecycle.py`, edited on the way or not, while two callers
+/// that use it change for a reason of their own.
+fn moved_repo(edited: bool) -> TestRepo {
+    let t = TestRepo::new();
+    std::fs::write(t.path.join(".git/info/exclude"), ".fake-*\n").unwrap();
+    t.write("home.py", format!("import os\n\n{KIND}\ndef stay():\n    return 1\n"));
+    t.write("lifecycle.py", "def lifecycle():\n    return 0\n");
+    for name in ["use_a", "use_b"] {
+        t.write(&format!("{name}.py"), "def run():\n    return 1\n");
+    }
+    t.commit("base");
+    t.write("home.py", "import os\n\ndef stay():\n    return 1\n");
+    let carried = if edited { KIND.replace("code for kind", "code for the kind") } else { KIND.to_owned() };
+    t.write("lifecycle.py", format!("def lifecycle():\n    return 0\n\n{carried}"));
+    for name in ["use_a", "use_b"] {
+        t.write(&format!("{name}.py"), "def run():\n    return 2\n");
+    }
+    t
+}
+
+fn moved_graph() -> Value {
+    let one =
+        |name: &str, line: u32, end: u32| json!([{ "name": name, "kind": 12, "line": line, "endLine": end, "col": 4 }]);
+    json!({
+        "outlines": {
+            "home.py": one("stay", 3, 4),
+            "lifecycle.py": [
+                { "name": "lifecycle", "kind": 12, "line": 1, "endLine": 2, "col": 4 },
+                { "name": "Kind", "kind": 5, "line": 4, "endLine": 9, "col": 6 },
+            ],
+            "use_a.py": one("run", 1, 2),
+            "use_b.py": one("run", 1, 2),
+        },
+        "references": { "lifecycle.py:4:6": [
+            { "path": "use_a.py", "line": 2, "col": 4 },
+            { "path": "use_b.py", "line": 2, "col": 4 },
+        ] },
+    })
+}
+
+#[tokio::test]
+async fn a_class_moved_verbatim_to_another_file_makes_no_arrow_into_it() {
+    let python = [(LanguageId::Python, "fake")];
+    let Some(s) = serve_graph(moved_repo(false), &moved_graph(), EnterRequest::Working, &python, &[]).await else {
+        return;
+    };
+    let got = graph(&s).await;
+    assert_eq!(got["clusters"], json!([]), "{got}");
+    assert_eq!(got["unlinked"], json!(["home.py", "lifecycle.py", "use_a.py", "use_b.py"]));
+    assert!(!asked(&s).await.contains(&"lifecycle.py:4:6".to_owned()), "the moved class was asked about");
+    s.close().await;
+}
+
+#[tokio::test]
+async fn a_class_moved_and_edited_on_the_way_keeps_its_arrows() {
+    let python = [(LanguageId::Python, "fake")];
+    let Some(s) = serve_graph(moved_repo(true), &moved_graph(), EnterRequest::Working, &python, &[]).await else {
+        return;
+    };
+    let got = graph(&s).await;
+    let clusters = got["clusters"].as_array().unwrap();
+    assert_eq!(clusters.len(), 1, "{got}");
+    assert_eq!(clusters[0]["files"], json!(["lifecycle.py", "use_a.py", "use_b.py"]));
+    let links: Vec<(&str, &str, i64)> = clusters[0]["links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| (l["from"].as_str().unwrap(), l["to"].as_str().unwrap(), l["weight"].as_i64().unwrap()))
+        .collect();
+    assert_eq!(links, [("use_a.py", "lifecycle.py", 1), ("use_b.py", "lifecycle.py", 1)]);
+    s.close().await;
+}
+
+/// `kind.rs` holds `enum Kind` and `impl Kind`, both touched; `user.rs` uses the enum once.
+fn impl_repo() -> TestRepo {
+    let t = TestRepo::new();
+    std::fs::write(t.path.join(".git/info/exclude"), ".fake-*\n").unwrap();
+    let kind = |a: &str, tag: u8| {
+        format!(
+            "pub enum Kind {{\n    {a},\n    B,\n}}\n\nimpl Kind {{\n    const TAG: u8 = {tag};\n    pub fn label(&self) -> u8 {{\n        1\n    }}\n}}\n"
+        )
+    };
+    t.write("kind.rs", kind("A", 1));
+    t.write("user.rs", "fn caller() {\n    let _ = Kind::A;\n}\n");
+    t.commit("base");
+    t.write("kind.rs", kind("A2", 2));
+    t.write("user.rs", "fn caller() {\n    let _ = Kind::A2;\n}\n");
+    t
+}
+
+#[tokio::test]
+async fn an_impl_block_beside_its_enum_does_not_make_the_enum_two_used_symbols() {
+    // Like rust-analyzer, the fake answers the enum's uses at the impl's position too.
+    let uses = json!([{ "path": "user.rs", "line": 2, "col": 12 }]);
+    let graph_script = json!({
+        "outlines": {
+            "kind.rs": [
+                { "name": "Kind", "kind": 10, "line": 1, "endLine": 4, "col": 9 },
+                { "name": "impl Kind", "kind": 19, "line": 6, "endLine": 11, "col": 5, "children": [
+                    { "name": "label", "kind": 12, "line": 8, "endLine": 10, "col": 11 },
+                ] },
+            ],
+            "user.rs": [{ "name": "caller", "kind": 12, "line": 1, "endLine": 3, "col": 3 }],
+        },
+        "references": { "kind.rs:1:9": uses, "kind.rs:6:5": uses },
+    });
+    let rust = [(LanguageId::Rust, "fake")];
+    let Some(s) = serve_graph(impl_repo(), &graph_script, EnterRequest::Working, &rust, &[]).await else { return };
+    let got = graph(&s).await;
+    assert_eq!(
+        got["clusters"][0]["links"],
+        json!([{
+            "from": "user.rs", "to": "kind.rs", "weight": 1, "total": 1,
+            "uses": [{ "symbol": "Kind", "kind": 10, "path": "kind.rs", "lines": [2] }],
+        }]),
+        "{got}"
+    );
+    let mut asked = asked(&s).await;
+    asked.sort();
+    assert_eq!(asked, ["kind.rs:1:9", "user.rs:1:3"], "the impl is not asked what uses it");
     s.close().await;
 }

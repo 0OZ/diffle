@@ -4,6 +4,7 @@
 //! start: a change confined to a decorator, `#[derive]` or `@Override` above it lands in no symbol.
 use std::collections::{BTreeSet, HashMap};
 
+use super::moved::{Edits, Print, Run, Side};
 use crate::protocol::LspSymbol;
 
 /// LSP SymbolKind numbers that make a node wherever they sit: module, namespace, class, method,
@@ -24,36 +25,59 @@ enum Cursor {
     Hunk(u32),
 }
 
-/// The 1-based new-side lines a unified patch touches: each `+` line, and for a `-` line the
-/// new-side line now at that position, so a pure deletion still points at code.
-pub fn changed_lines(patch: &str) -> BTreeSet<u32> {
-    let mut lines = BTreeSet::new();
+/// A unified patch as runs of consecutive added or removed lines, each with the new-side line it
+/// marks: every added line its own, and for removed lines the new-side line now at their position,
+/// so a pure deletion still points at code.
+pub fn edits(patch: &str) -> Edits {
+    let mut edits = Edits::default();
+    let mut open: Option<Run> = None;
     let mut cursor = Cursor::Header;
     for row in patch.lines() {
         if row.starts_with(HUNK_MARKER) {
+            close(&mut open, &mut edits);
             cursor = new_start(row).map_or(Cursor::Header, Cursor::Hunk);
             continue;
         }
         let Cursor::Hunk(next) = cursor else { continue };
+        let text = row.get(1..).unwrap_or_default();
         cursor = match row.as_bytes().first() {
             Some(b'+') => {
-                lines.insert(next);
+                extend(&mut open, &mut edits, Side::Added, next, text);
                 Cursor::Hunk(next.saturating_add(1))
             }
             Some(b'-') => {
-                lines.insert(next);
+                extend(&mut open, &mut edits, Side::Removed, next, text);
                 cursor
             }
-            Some(b' ') | None => Cursor::Hunk(next.saturating_add(1)),
+            Some(b' ') | None => {
+                close(&mut open, &mut edits);
+                Cursor::Hunk(next.saturating_add(1))
+            }
+            // `\ No newline at end of file` belongs to the line before it.
             Some(_) => cursor,
         };
     }
-    lines
+    close(&mut open, &mut edits);
+    edits
 }
 
-/// The changed lines of each file a multi-file patch names. A file whose path the headers do not
-/// give plainly (a C-quoted name) is left out: the caller asks for it alone.
-pub fn changed_lines_by_file(patch: &str) -> HashMap<String, BTreeSet<u32>> {
+/// Adds a line to the open run, or starts a run of `side` at `at` when the open one is the other side's.
+fn extend(open: &mut Option<Run>, edits: &mut Edits, side: Side, at: u32, text: &str) {
+    if open.as_ref().is_some_and(|run| run.side != side) {
+        close(open, edits);
+    }
+    open.get_or_insert_with(|| Run { side, first: at, prints: Vec::new() }).prints.push(Print::of(text));
+}
+
+fn close(open: &mut Option<Run>, edits: &mut Edits) {
+    if let Some(run) = open.take() {
+        edits.push(run);
+    }
+}
+
+/// The edits of each file a multi-file patch names. A file whose path the headers do not give
+/// plainly (a C-quoted name) is left out: the caller asks for it alone.
+pub fn edits_by_file(patch: &str) -> HashMap<String, Edits> {
     let starts = std::iter::once(0)
         .filter(|_| patch.starts_with(FILE_MARKER))
         .chain(patch.match_indices(&format!("\n{FILE_MARKER}")).map(|(i, _)| i + 1))
@@ -64,7 +88,7 @@ pub fn changed_lines_by_file(patch: &str) -> HashMap<String, BTreeSet<u32>> {
         .zip(ends)
         .filter_map(|(&from, to)| {
             let block = &patch[from..to];
-            Some((block_path(block)?, changed_lines(block)))
+            Some((block_path(block)?, edits(block)))
         })
         .collect()
 }
@@ -163,10 +187,18 @@ pub fn changed_symbols<'a>(outline: &'a [LspSymbol], lines: &BTreeSet<u32>) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graph::moved::{Side, unmoved};
     use crate::protocol::LspSymbol;
 
+    /// The lines a patch changes on its own, as the graph would take them.
     fn lines(patch: &str) -> Vec<u32> {
-        changed_lines(patch).into_iter().collect()
+        unmoved(&[&edits(patch)]).remove(0).into_iter().collect()
+    }
+
+    /// The runs of a patch as `(+ or -, first line, how many lines)`.
+    fn shape(patch: &str) -> Vec<(char, u32, usize)> {
+        let sign = |side| if side == Side::Added { '+' } else { '-' };
+        edits(patch).runs().iter().map(|r| (sign(r.side), r.first, r.prints.len())).collect()
     }
 
     fn sym(name: &str, kind: i64, line: i64, end_line: i64, container: Option<&str>) -> LspSymbol {
@@ -228,9 +260,29 @@ mod tests {
     }
 
     #[test]
+    fn runs_split_where_context_or_the_other_side_comes_between() {
+        let patch = "@@ -1,7 +1,7 @@\n a\n-b\n-c\n+B\n+C\n d\n+e\n f\n-g\n";
+        assert_eq!(shape(patch), [('-', 2, 2), ('+', 2, 2), ('+', 5, 1), ('-', 7, 1)]);
+    }
+
+    #[test]
+    fn a_no_newline_marker_does_not_cut_a_run() {
+        let patch =
+            "@@ -1,2 +1,2 @@\n-one\n-two\n\\ No newline at end of file\n+uno\n+dos\n\\ No newline at end of file\n";
+        assert_eq!(shape(patch), [('-', 1, 2), ('+', 1, 2)]);
+    }
+
+    #[test]
+    fn a_runs_lines_are_fingerprinted_by_their_trimmed_text() {
+        let patch = "@@ -1,1 +1,1 @@\n-    let x = compute(1);\n+let x = compute(1);\n";
+        let got = edits(patch);
+        assert_eq!(got.runs()[0].prints, got.runs()[1].prints);
+    }
+
+    #[test]
     fn a_patch_without_hunks_changes_nothing() {
-        assert!(changed_lines("Binary files a/x and b/x differ\n").is_empty());
-        assert!(changed_lines("").is_empty());
+        assert!(lines("Binary files a/x and b/x differ\n").is_empty());
+        assert!(lines("").is_empty());
     }
 
     #[test]
@@ -351,8 +403,9 @@ mod tests {
             "diff --git a/gone.py b/gone.py\ndeleted file mode 100644\n--- a/gone.py\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-z\n",
             "diff --git a/n.py b/n.py\nnew file mode 100644\n--- /dev/null\n+++ b/n.py\n@@ -0,0 +1,2 @@\n+a\n+b\n",
         );
-        let by_file = changed_lines_by_file(patch);
-        let mut got: Vec<(String, Vec<u32>)> = by_file.into_iter().map(|(p, l)| (p, l.into_iter().collect())).collect();
+        let by_file = edits_by_file(patch);
+        let mut got: Vec<(String, Vec<u32>)> =
+            by_file.into_iter().map(|(p, e)| (p, unmoved(&[&e]).remove(0).into_iter().collect())).collect();
         got.sort();
         let want = [
             ("a.py", vec![2]),
@@ -367,8 +420,8 @@ mod tests {
     #[test]
     fn a_quoted_path_is_left_for_the_caller_to_ask_alone() {
         let patch = "diff --git \"a/q\\\"x.py\" \"b/q\\\"x.py\"\n--- \"a/q\\\"x.py\"\n+++ \"b/q\\\"x.py\"\n@@ -1,1 +1,2 @@\n a\n+b\n";
-        assert!(changed_lines_by_file(patch).is_empty());
-        assert!(changed_lines_by_file("").is_empty());
+        assert!(edits_by_file(patch).is_empty());
+        assert!(edits_by_file("").is_empty());
     }
 
     #[test]

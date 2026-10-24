@@ -116,7 +116,7 @@ globs in settings or with `diffle config`.
 
 A big diff is often several features. The file tree's **Connected** scope groups the changed
 files into clusters by what references what, and the review pane narrows to the cluster you pick.
-`J` and `K` stay inside it.
+`J` and `K` stay inside it. Code that was only moved to another file does not count as changed.
 
 - `gC`: enter or leave the Connected scope
 - `gt` / `gT`: next or previous group

@@ -1,10 +1,11 @@
 //! What the graph asks of the world: patches, outlines and references. `PoolSource` is the only
 //! place that touches the language-server pool; tests stand in with an in-memory source.
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::Arc;
 
-use super::changed::{changed_lines, changed_lines_by_file};
+use super::changed::{edits, edits_by_file};
+use super::moved::Edits;
 use crate::error::{Error, Result};
 use crate::lsp::pool::LspPool;
 use crate::protocol::{
@@ -29,9 +30,9 @@ pub trait SymbolSource: Sync {
     /// so a caller asks once per language.
     fn blocker(&self, path: &str) -> Option<String>;
 
-    /// The 1-based new-side lines each of `paths` changes. A path missing from the answer is not
-    /// changed any more. Only the line sets are kept, never the patches.
-    fn changed_lines(&self, paths: &[&str]) -> impl Future<Output = Result<HashMap<String, BTreeSet<u32>>>> + Send;
+    /// What each of `paths` changes, as line fingerprints and new-side line numbers. A path missing
+    /// from the answer is not changed any more. Only these are kept, never the patches.
+    fn edits(&self, paths: &[&str]) -> impl Future<Output = Result<HashMap<String, Edits>>> + Send;
 
     fn outline(&self, path: &str) -> impl Future<Output = Result<LspSymbolsResponse>> + Send;
 
@@ -85,17 +86,17 @@ impl SymbolSource for PoolSource {
         self.blocked(Some(path))
     }
 
-    async fn changed_lines(&self, paths: &[&str]) -> Result<HashMap<String, BTreeSet<u32>>> {
+    async fn edits(&self, paths: &[&str]) -> Result<HashMap<String, Edits>> {
         let wanted: HashSet<&str> = paths.iter().copied().collect();
         let owned: Vec<String> = paths.iter().map(|p| (*p).to_owned()).collect();
-        let mut found = changed_lines_by_file(&self.snapshotter.patches_of(&self.snap, &owned).await?);
+        let mut found = edits_by_file(&self.snapshotter.patches_of(&self.snap, &owned).await?);
         found.retain(|path, _| wanted.contains(path.as_str()));
         // A file the headers did not name plainly: its patch alone is unambiguous.
         let unnamed: Vec<&String> = owned.iter().filter(|p| !found.contains_key(*p)).collect();
         for path in unnamed {
             let alone = self.snapshotter.patches_of(&self.snap, std::slice::from_ref(path)).await?;
             if !alone.is_empty() {
-                found.insert(path.clone(), changed_lines(&alone));
+                found.insert(path.clone(), edits(&alone));
             }
         }
         Ok(found)
@@ -183,7 +184,7 @@ pub(crate) mod fake {
         pub busy_for: AtomicUsize,
         pub polls: AtomicUsize,
         pub blocked: HashMap<String, String>,
-        /// How many paths each `changed_lines` call was given.
+        /// How many paths each `edits` call was given.
         pub batches: Mutex<Vec<usize>>,
         /// How often `blocker` was asked.
         pub blocker_calls: AtomicUsize,
@@ -197,6 +198,13 @@ pub(crate) mod fake {
         pub fn file(mut self, path: &str, lines: &[u32], symbols: Vec<LspSymbol>) -> Self {
             let patch: String = lines.iter().map(|l| format!("@@ -1,0 +{l},1 @@\n+x\n")).collect();
             self.patches.insert(path.into(), patch);
+            self.outlines.insert(path.into(), Ok(symbols));
+            self
+        }
+
+        /// A changed file with this very patch, for edits a line list cannot say (what was removed, and its text).
+        pub fn patched(mut self, path: &str, patch: &str, symbols: Vec<LspSymbol>) -> Self {
+            self.patches.insert(path.into(), patch.into());
             self.outlines.insert(path.into(), Ok(symbols));
             self
         }
@@ -244,9 +252,9 @@ pub(crate) mod fake {
             self.blocked.get(path).cloned()
         }
 
-        async fn changed_lines(&self, paths: &[&str]) -> Result<HashMap<String, BTreeSet<u32>>> {
+        async fn edits(&self, paths: &[&str]) -> Result<HashMap<String, Edits>> {
             self.batches.lock().unwrap().push(paths.len());
-            Ok(paths.iter().filter_map(|p| Some(((*p).to_owned(), changed_lines(self.patches.get(*p)?)))).collect())
+            Ok(paths.iter().filter_map(|p| Some(((*p).to_owned(), edits(self.patches.get(*p)?)))).collect())
         }
 
         async fn outline(&self, path: &str) -> Result<LspSymbolsResponse> {
