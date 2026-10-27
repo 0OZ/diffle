@@ -29,7 +29,8 @@ Options:
 
 $ diffle pr --help
 
-A GitHub pull request, as GitHub shows it: merge-base(base, head) vs head.
+A GitHub pull request in an isolated clone: merge-base(base, head) vs head. A lone pull request url
+opens one too.
 
 Usage: diffle pr [OPTIONS] [pr]
 

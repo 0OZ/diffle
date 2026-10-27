@@ -197,7 +197,8 @@ impl GitRepo {
 
     /// The commit a checked-out submodule is at, or '' if it is not a repository.
     async fn submodule_head(&self, path: &str) -> String {
-        exec_git(&self.root.join(path), &["rev-parse", "--verify", "--quiet", "HEAD"], ExecOptions::default())
+        let opts = ExecOptions { environment: self.environment, ..Default::default() };
+        exec_git(&self.root.join(path), &["rev-parse", "--verify", "--quiet", "HEAD"], opts)
             .await
             .map(|out| String::from_utf8_lossy(&out).trim().to_owned())
             .unwrap_or_default()

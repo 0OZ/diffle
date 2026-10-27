@@ -1,16 +1,15 @@
 //! One long-lived `git cat-file --batch` per repository.
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::process::Stdio;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as SyncMutex};
 use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{ChildStdin, ChildStdout};
+use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::{Mutex, oneshot};
 
-use super::exec::{ExecOptions, command, exec_git, text};
+use super::exec::{ExecOptions, GitEnvironment, exec_git, spawn_batch, text};
 use crate::error::GitError;
 
 /// An idle batch is reaped after this long; the next request respawns one.
@@ -34,6 +33,18 @@ struct Live {
     stdin: ChildStdin,
     pending: Arc<SyncMutex<VecDeque<Pending>>>,
     id: usize,
+    child: Arc<SyncMutex<Option<Child>>>,
+}
+
+/// Sends after the batch task has waited for its child, including when that task panics.
+struct ExitSignal(Option<oneshot::Sender<()>>);
+
+impl Drop for ExitSignal {
+    fn drop(&mut self) {
+        if let Some(tx) = self.0.take() {
+            let _ = tx.send(());
+        }
+    }
 }
 
 /// Object names go in on stdin and come back in order on stdout, so a burst of reads (hydrating a
@@ -42,13 +53,46 @@ struct Live {
 /// dies, every in-flight request fails and the next one starts over.
 pub struct CatFileBatch {
     cwd: PathBuf,
+    environment: GitEnvironment,
     live: Arc<Mutex<Option<Live>>>,
     spawns: AtomicUsize,
+    closed: AtomicBool,
+    /// Completed once the current child's `wait` has returned. Replaced on each spawn.
+    reaped: SyncMutex<Option<oneshot::Receiver<()>>>,
 }
 
 impl CatFileBatch {
-    pub fn new(cwd: PathBuf) -> Self {
-        Self { cwd, live: Arc::new(Mutex::new(None)), spawns: AtomicUsize::new(0) }
+    pub fn new(cwd: PathBuf, environment: GitEnvironment) -> Self {
+        Self {
+            cwd,
+            environment,
+            live: Arc::new(Mutex::new(None)),
+            spawns: AtomicUsize::new(0),
+            closed: AtomicBool::new(false),
+            reaped: SyncMutex::new(None),
+        }
+    }
+
+    /// Kill the batch, if one is running, and return only after it has been waited on.
+    /// Later requests fail and do not spawn a replacement, including after the idle reap.
+    pub async fn close(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+        let live = {
+            let mut slot = self.live.lock().await;
+            slot.take()
+        };
+        if let Some(live) = live {
+            let child = lock_child(&live.child).take();
+            drop(live);
+            if let Some(mut child) = child {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+            }
+        }
+        let reaped = lock_reaped(&self.reaped).take();
+        if let Some(reaped) = reaped {
+            let _ = reaped.await;
+        }
     }
 
     pub fn spawns(&self) -> usize {
@@ -58,15 +102,25 @@ impl CatFileBatch {
     /// The object any `cat-file` name (`sha`, `rev:path`) names, or none when git reports it
     /// missing or ambiguous. A name with a newline cannot ride the batch and gets a call of its own.
     pub async fn request(&self, name: &str, keep: usize) -> Answer {
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(batch_closed());
+        }
         if name.contains('\n') {
             return self.single(name, keep).await;
         }
         let rx = {
             let mut live = self.live.lock().await;
+            // Checked under the same lock as spawn: an idle reap clears the slot, and a request
+            // that lost the race with `close` must not start another process.
+            if self.closed.load(Ordering::SeqCst) {
+                return Err(batch_closed());
+            }
             if live.is_none() {
                 *live = Some(self.spawn()?);
             }
-            let batch = live.as_mut().expect("spawned");
+            let Some(batch) = live.as_mut() else {
+                return Err(batch_closed());
+            };
             let (tx, rx) = oneshot::channel();
             // Queued and written under one lock, so answers pair with requests in order.
             batch.pending.lock().unwrap().push_back(Pending { keep, tx });
@@ -82,29 +136,39 @@ impl CatFileBatch {
     }
 
     async fn single(&self, name: &str, keep: usize) -> Answer {
-        let Ok(kind) = exec_git(&self.cwd, &["cat-file", "-t", name], ExecOptions::default()).await else {
+        let opts = ExecOptions { environment: self.environment, ..Default::default() };
+        let Ok(kind) = exec_git(&self.cwd, &["cat-file", "-t", name], opts).await else {
             return Ok(None);
         };
         let kind = text(kind).trim().to_owned();
-        let mut body = exec_git(&self.cwd, &["cat-file", &kind, name], ExecOptions::default()).await?;
+        let opts = ExecOptions { environment: self.environment, ..Default::default() };
+        let mut body = exec_git(&self.cwd, &["cat-file", &kind, name], opts).await?;
         let size = body.len();
         body.truncate(keep);
         Ok(Some(CatFileObject { kind, size, body }))
     }
 
     fn spawn(&self) -> Result<Live, GitError> {
-        let mut child = command(&self.cwd, &["cat-file", "--batch"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| GitError::refused(format!("git cat-file --batch failed: {e}"), &["cat-file", "--batch"]))?;
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(batch_closed());
+        }
+        let mut child = spawn_batch(&self.cwd, self.environment)?;
         let id = self.spawns.fetch_add(1, Ordering::Relaxed) + 1;
         let pending = Arc::new(SyncMutex::new(VecDeque::new()));
-        let stdout = child.stdout.take().expect("piped stdout");
-        let stdin = child.stdin.take().expect("piped stdin");
+        let stdout = child.stdout.take().ok_or_else(|| {
+            GitError::refused("git cat-file --batch failed: missing stdout", &["cat-file", "--batch"])
+        })?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| GitError::refused("git cat-file --batch failed: missing stdin", &["cat-file", "--batch"]))?;
+        let child = Arc::new(SyncMutex::new(Some(child)));
+        let task_child = child.clone();
         let (live, queue) = (self.live.clone(), pending.clone());
+        let (exit_tx, exit_rx) = oneshot::channel();
+        *lock_reaped(&self.reaped) = Some(exit_rx);
         tokio::spawn(async move {
+            let exit = ExitSignal(Some(exit_tx));
             let error = read_answers(stdout, &queue, &live, id).await;
             let mut slot = live.lock().await;
             if slot.as_ref().is_some_and(|l| l.id == id) {
@@ -114,10 +178,28 @@ impl CatFileBatch {
             for p in queue.lock().unwrap().drain(..) {
                 let _ = p.tx.send(Err(error.clone()));
             }
-            let _ = child.wait().await;
+            let child = lock_child(&task_child).take();
+            if let Some(mut child) = child {
+                let _ = child.wait().await;
+            }
+            drop(exit);
         });
-        Ok(Live { stdin, pending, id })
+        Ok(Live { stdin, pending, id, child })
     }
+}
+
+fn batch_closed() -> GitError {
+    GitError::refused("git cat-file --batch closed", &["cat-file", "--batch"])
+}
+
+fn lock_child(slot: &SyncMutex<Option<Child>>) -> std::sync::MutexGuard<'_, Option<Child>> {
+    slot.lock().unwrap_or_else(|poison| poison.into_inner())
+}
+
+fn lock_reaped(
+    slot: &SyncMutex<Option<oneshot::Receiver<()>>>,
+) -> std::sync::MutexGuard<'_, Option<oneshot::Receiver<()>>> {
+    slot.lock().unwrap_or_else(|poison| poison.into_inner())
 }
 
 /// Answers per name: `<sha> <type> <size>\n<body>\n`, or `<name> missing\n` (also `ambiguous`).

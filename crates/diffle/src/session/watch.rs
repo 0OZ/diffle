@@ -14,6 +14,13 @@ const DEBOUNCE: Duration = Duration::from_millis(150);
 type Ignored = Arc<Mutex<Arc<HashSet<String>>>>;
 
 impl Session {
+    pub(super) async fn watch_active(self: &Arc<Self>, a: &Arc<Active>) -> Result<()> {
+        if self.watch && a.follows != Live::None {
+            *a.watcher.lock().await = Some(self.start_watcher(a).await?);
+        }
+        Ok(())
+    }
+
     pub(super) async fn start_watcher(self: &Arc<Self>, a: &Arc<Active>) -> Result<Watcher> {
         let repo = &self.repo;
         let (session, active) = (Arc::downgrade(self), Arc::downgrade(a));

@@ -77,8 +77,11 @@ diffle range-diff main..v1 main..v2   # how a series of commits was reworked, li
 diffle --help           # all commands and flags
 ```
 
-`diffle pr` needs a [GitHub token](#send-comments-to-github). A PR from another repository opens
-in a temporary clone.
+`diffle pr 27` and `diffle https://github.com/org/repo/pull/27` need a [GitHub token](#send-comments-to-github).
+Both open the pull request in a temporary clone and leave your existing checkout untouched.
+A PR URL works from any directory; a number or branch is looked up using the current repository.
+The clone is removed when the run ends. It is an isolated checkout, not a sandbox: review only a
+repository you trust. diffle does not install that repository's dependencies.
 
 Closing the last diffle tab stops the server and prints your open comments. Pass `--keep-alive`
 to keep it running.
@@ -107,8 +110,11 @@ A comparison lists its commits above the threads. Pick one, or step with `<` and
 that commit alone; **All changes** returns to the whole range. Comments on a focused commit
 belong to that commit, as in `diffle show`.
 
-Comments live in `<git-dir>/diffle/` and never touch your worktree. They follow their text as
-the code changes and go stale once it leaves the diff.
+Comments live in `<git-dir>/diffle/` and never touch your worktree. A pull request keeps them,
+and which files you have viewed, under the config directory instead (`diffle config` prints its
+path), one directory per host and repository, so they are still there the next time you open that
+pull request. Earlier iterations of an isolated review last only for that run. Comments follow
+their text as the code changes and go stale once it leaves the diff.
 
 Generated files start collapsed, as on GitHub: `linguist-generated` in `.gitattributes` marks
 them, and `linguist-generated=false` opts a file out. To collapse other files, add auto-viewed
@@ -179,8 +185,9 @@ Or persistently, in the config file (`diffle config` prints its path and content
 { "lspCommands": { "rust": "rust-analyzer", "java": "" } }
 ```
 
-Language servers run inside the repository and can read anything your user can.
-`--no-lsp` starts none.
+Language servers run inside the repository diffle is reviewing, including a pull request's
+temporary clone. They can read anything your user can and may run the project's own tooling, so
+a missing tool means less navigation rather than a complete setup. `--no-lsp` starts none.
 
 ## See the change as a graph
 

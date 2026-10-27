@@ -78,12 +78,26 @@ impl Snapshotter {
     }
 
     pub async fn current(self: &Arc<Self>) -> Result<Arc<Snapshot>> {
+        self.current_with(None).await
+    }
+
+    pub(crate) async fn resolve(&self) -> Result<Shown> {
+        resolve_shown(&self.repo, &self.review, self.iterations.as_ref(), self.range_key.as_deref()).await
+    }
+
+    /// Freezes the endpoints resolved by the session before its owned checkout changed HEAD.
+    pub(crate) async fn current_resolved(self: &Arc<Self>, shown: Shown) -> Result<Arc<Snapshot>> {
+        self.current_with(Some(shown)).await
+    }
+
+    async fn current_with(self: &Arc<Self>, shown: Option<Shown>) -> Result<Arc<Snapshot>> {
         let (task, version) = {
             let mut state = self.state.lock().unwrap();
             let version = state.version;
             let this = self.clone();
-            let task =
-                state.snapshot.get_or_insert_with(|| async move { this.compute(version).await }.boxed().shared());
+            let task = state
+                .snapshot
+                .get_or_insert_with(|| async move { this.compute(version, shown).await }.boxed().shared());
             (task.clone(), version)
         };
         let result = task.await;
@@ -192,11 +206,14 @@ impl Snapshotter {
         }
     }
 
-    async fn compute(self: Arc<Self>, version: i64) -> Result<Arc<Snapshot>> {
+    async fn compute(self: Arc<Self>, version: i64, shown: Option<Shown>) -> Result<Arc<Snapshot>> {
         let repo = &self.repo;
-        let shown = resolve_shown(repo, &self.review, self.iterations.as_ref(), self.range_key.as_deref());
-        let (shown, head_sha) = tokio::join!(shown, repo.resolve("HEAD"));
-        let (shown, head_sha) = (shown?, head_sha.unwrap_or_default());
+        let shown = match shown {
+            Some(shown) => shown,
+            None => self.resolve().await?,
+        };
+        let head = repo.resolve("HEAD").await;
+        let head_sha = if repo.is_isolated() { head? } else { head.unwrap_or_default() };
         let Shown { old_sha, new_sha, follows, range, interdiff, commit, comment_key } = shown;
         // The tree belongs to the selected new side: a commit's own listing, or the index plus
         // untracked files (added below via `changed`) for the worktree.

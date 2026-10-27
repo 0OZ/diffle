@@ -1,6 +1,7 @@
 //! All Git execution. Calls run with cwd = the repository root, except reading a submodule's HEAD.
 mod catfile;
 mod changes;
+mod checkout;
 mod commits;
 pub mod exec;
 mod files;
@@ -17,7 +18,7 @@ pub use grep::{GrepMatch, GrepOptions, GrepResult};
 pub use refs::{Remote, Upstream};
 
 use crate::error::{GitError, Result};
-use exec::{ExecOptions, exec_git, text};
+use exec::{ExecOptions, GitEnvironment, exec_git, text};
 
 /// Git's `core.bigFileThreshold` default: a file this large is diffed as binary without reading
 /// it, which also bounds what sizing an untracked file loads.
@@ -36,14 +37,23 @@ pub struct GitRepo {
     /// Where this run fetches pull requests; unique, so two servers never share refs.
     pub review_refs: String,
     cat_file: CatFileBatch,
+    /// `open` is ordinary. Only `clone_into` may be checked out.
+    isolated: bool,
+    environment: GitEnvironment,
+    /// Pseudo-git-root whose `diffle` child holds review comments. Defaults to `git_dir`.
+    review_state_dir: PathBuf,
 }
 
 impl GitRepo {
     pub async fn open(dir: &Path) -> Result<Self> {
+        Self::open_with_environment(dir, GitEnvironment::Inherited).await
+    }
+
+    async fn open_with_environment(dir: &Path, environment: GitEnvironment) -> Result<Self> {
         let out = exec_git(
             dir,
             &["rev-parse", "--show-toplevel", "--absolute-git-dir", "--git-common-dir"],
-            ExecOptions::default(),
+            ExecOptions { environment, ..Default::default() },
         )
         .await?;
         let out = text(out);
@@ -59,20 +69,34 @@ impl GitRepo {
         let root = native(root);
         let git_dir = native(git_dir);
         let common_dir = lines.next().map_or_else(|| git_dir.clone(), |common| native_path(&root.join(native(common))));
+        let review_state_dir = git_dir.clone();
         Ok(Self {
-            cat_file: CatFileBatch::new(root.clone()),
+            cat_file: CatFileBatch::new(root.clone(), environment),
             review_refs: format!("refs/diffle/{}", uuid::Uuid::new_v4()),
             root,
             git_dir,
             common_dir,
+            isolated: false,
+            environment,
+            review_state_dir,
         })
     }
 
-    /// Clone into an empty directory; full history preserves merge bases.
+    /// Clone into an empty directory; full history preserves merge bases. The result is an owned
+    /// checkout: `checkout_owned` may detach it, and `open` may not.
     pub async fn clone_into(url: &str, dir: &Path) -> Result<Self> {
-        let opts = ExecOptions { env: &[("GIT_TERMINAL_PROMPT", "0")], ..Default::default() };
+        let environment = GitEnvironment::Isolated;
+        let opts = ExecOptions { environment, env: &[("GIT_TERMINAL_PROMPT", "0")], ..Default::default() };
         exec_git(dir, &["clone", "--quiet", "--no-tags", "--", url, "."], opts).await?;
-        Self::open(dir).await
+        let mut repo = Self::open_with_environment(dir, environment).await?;
+        let (root, git_dir, common_dir) = owned_paths(dir, &repo.root, &repo.git_dir, &repo.common_dir)?;
+        repo.cat_file = CatFileBatch::new(root.clone(), environment);
+        repo.review_state_dir = git_dir.clone();
+        repo.root = root;
+        repo.git_dir = git_dir;
+        repo.common_dir = common_dir;
+        repo.isolated = true;
+        Ok(repo)
     }
 
     /// How many `cat-file --batch` processes this repository has started. Diagnostics and tests.
@@ -81,7 +105,7 @@ impl GitRepo {
     }
 
     async fn exec(&self, args: &[&str], opts: ExecOptions<'_>) -> Result<Vec<u8>, GitError> {
-        exec_git(&self.root, args, opts).await
+        exec_git(&self.root, args, ExecOptions { environment: self.environment, ..opts }).await
     }
 
     async fn text(&self, args: &[&str]) -> Result<String, GitError> {
@@ -91,6 +115,23 @@ impl GitRepo {
     async fn text_with(&self, args: &[&str], opts: ExecOptions<'_>) -> Result<String, GitError> {
         Ok(text(self.exec(args, opts).await?))
     }
+}
+
+/// Ownership is a filesystem fact, not just a successful `open` or a lexical path prefix.
+fn owned_paths(dir: &Path, root: &Path, git_dir: &Path, common_dir: &Path) -> Result<(PathBuf, PathBuf, PathBuf)> {
+    let canonical = |path: &Path| {
+        dunce::canonicalize(path).map_err(|error| {
+            GitError::refused(format!("cannot validate owned clone path {}: {error}", path.display()), &["clone"])
+        })
+    };
+    let dir = canonical(dir)?;
+    let root = canonical(root)?;
+    let git_dir = canonical(git_dir)?;
+    let common_dir = canonical(common_dir)?;
+    if root != dir || !git_dir.starts_with(&dir) || !common_dir.starts_with(&dir) {
+        return Err(GitError::refused("refusing owned clone with repository paths outside its root", &["clone"]).into());
+    }
+    Ok((root, git_dir, common_dir))
 }
 
 fn native(path: &str) -> PathBuf {
