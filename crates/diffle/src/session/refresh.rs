@@ -17,6 +17,13 @@ impl Session {
             if context == this.context() {
                 return Ok(());
             }
+            if this.repo.is_isolated()
+                && let Ok(a) = this.active()
+            {
+                let snap = this.activate_context(a.review.clone(), context).await?;
+                this.hub.broadcast(ServerMessage::Snapshot { version: snap.version });
+                return Ok(());
+            }
             *this.context.lock().unwrap() = context;
             let Ok(a) = this.active() else { return Ok(()) };
             a.snapshotter.set_context(context, this.next_version());
@@ -122,7 +129,7 @@ impl Session {
     /// Back to the whole range, in place of the interdiff, and tells clients.
     async fn leave_interdiff(self: &Arc<Self>, a: &Active) -> Result<Arc<Snapshot>> {
         let range = with_view(&a.review, RangeView::Whole).expect("an interdiff lies within a range");
-        let snap = self.activate(range).await?;
+        let snap = self.activate_context(range, self.context()).await?;
         self.hub.broadcast(ServerMessage::Snapshot { version: snap.version });
         Ok(snap)
     }
@@ -136,7 +143,12 @@ impl Session {
             && shown_iterations(&a.review).is_none()
         {
             let view = RangeView::Interdiff { from: from.clone(), to: to.clone(), pair: None };
-            let snap = self.activate(with_view(&a.review, view).expect("a range")).await?;
+            let snap = self.activate_context(with_view(&a.review, view).expect("a range"), self.context()).await?;
+            self.hub.broadcast(ServerMessage::Snapshot { version: snap.version });
+            return Ok(snap);
+        }
+        if self.repo.is_isolated() {
+            let snap = self.activate_context(a.review.clone(), self.context()).await?;
             self.hub.broadcast(ServerMessage::Snapshot { version: snap.version });
             return Ok(snap);
         }
@@ -147,6 +159,7 @@ impl Session {
     /// Computes `a`'s current snapshot, re-anchors its threads (hunks may have grown, shrunk or
     /// moved), then broadcasts and announces it.
     async fn publish(self: &Arc<Self>, a: &Arc<Active>) -> Result<Arc<Snapshot>> {
+        let _guard = self.workspace.gate.write().await;
         let snap = a.snapshotter.current().await?;
         self.relocate_comments(a, &snap).await?;
         // The snapshot resolved the refs afresh; a signal arriving later compares against it.
@@ -166,7 +179,7 @@ impl Session {
                 return Ok(());
             }
             let snap = a.snapshotter.current().await?;
-            let Review::Range { old, new, base, .. } = &a.review else { return Ok(()) };
+            let Review::Range { old, new, base, .. } = &a.resolution else { return Ok(()) };
             let ends = resolve_range(&this.repo, old, new, *base).await?;
             let moved = (ends.old_sha != snap.commits.old_sha || ends.new_sha != snap.commits.new_sha).then(|| Moved {
                 version: snap.version,

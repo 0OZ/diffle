@@ -10,8 +10,8 @@ const AFTER_HELP: &str = "\
 Shorthands (in place of <revs>):
   working                  same as HEAD..worktree: uncommitted changes, staged and untracked
                            included
-  pr [number|url]          a GitHub pull request: its base...head, fetched if needed
-                           (without an argument: the pull request for this branch)
+  pr [number|url]          a GitHub pull request in an isolated clone: its base...head
+                           (a lone pull request url is the same; without an argument: this branch's)
   show [rev]               same as <rev>^!: one commit against its first parent, pinned
                            (default: HEAD)
   range-diff <ranges...>   how one series of commits became another, like git range-diff:
@@ -143,7 +143,7 @@ pub enum Command {
     #[command(
         hide = true,
         args_override_self = true,
-        about = "A GitHub pull request, as GitHub shows it: merge-base(base, head) vs head."
+        about = "A GitHub pull request in an isolated clone: merge-base(base, head) vs head. A lone pull request url opens one too."
     )]
     Pr {
         /// pull request number or url; default: the pull request for this branch

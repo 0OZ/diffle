@@ -2,7 +2,7 @@
 // documentSymbol, workspace/symbol, hover, documentHighlight, shutdown. FAKE_LSP_GRAPH=1 makes
 // outlines and references real enough for the change graph (see `graphOutline`). Definitions point
 // at line 2 (FAKE_LSP_DEFINITION_LINE) of the queried file plus one location outside the root; references echo the open document's text length.
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 let buf = Buffer.alloc(0);
@@ -40,6 +40,9 @@ const span = (startLine, endLine, ch = 0) => ({
 
 const DEFINITION_LINE = Number(process.env.FAKE_LSP_DEFINITION_LINE ?? 2);
 
+// A workspace index intentionally ignores didOpen/didChange: unopened imports need a fresh process.
+let indexedImport;
+
 // FAKE_LSP_TAG: a server joining another on the same file; its answers say who spoke.
 const TAG = process.env.FAKE_LSP_TAG;
 
@@ -58,6 +61,18 @@ let nextId = 1000;
 function handle(msg) {
   // A response to a request of ours: nothing to do with it.
   if (!msg.method) return;
+  // A filesystem latch lets a real HTTP query hold the workspace lease until the test releases it.
+  const release = process.env.FAKE_LSP_QUERY_RELEASE;
+  const heldMethod = process.env.FAKE_LSP_QUERY_METHOD ?? 'textDocument/hover';
+  if (release && msg.id != null && msg.method === heldMethod && !existsSync(release)) {
+    writeFileSync(process.env.FAKE_LSP_QUERY_STARTED, String(process.pid));
+    const pending = setInterval(() => {
+      if (!existsSync(release)) return;
+      clearInterval(pending);
+      handle(msg);
+    }, 10);
+    return;
+  }
   if (modified > 0 && msg.id != null && msg.method?.startsWith('textDocument/')) {
     modified--;
     log(`refused ${msg.method}`);
@@ -65,6 +80,10 @@ function handle(msg) {
   }
   switch (msg.method) {
     case 'initialize':
+      if (process.env.FAKE_LSP_INDEX_IMPORT) {
+        indexedImport = readFileSync(process.env.FAKE_LSP_INDEX_IMPORT, 'utf8').trim();
+        log(`indexed ${process.cwd()}: ${indexedImport}`);
+      }
       if (process.env.FAKE_LSP_DIE === '1') process.exit(3);
       if (!msg.params.capabilities.window?.workDoneProgress) process.exit(4);
       if (msg.params.initializationOptions) log('init ' + JSON.stringify(msg.params.initializationOptions));
@@ -147,6 +166,7 @@ function handle(msg) {
       ]);
     }
     case 'textDocument/hover':
+      if (indexedImport != null) return reply(msg.id, { contents: { kind: 'plaintext', value: indexedImport } });
       // Empty text at line 1: nothing to say. Elsewhere: markdown plus a legacy language block.
       if (msg.params.position.line === 0) return reply(msg.id, null);
       if (TAG) return reply(msg.id, { contents: { kind: 'markdown', value: `${TAG} says hi` } });

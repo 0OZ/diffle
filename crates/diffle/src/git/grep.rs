@@ -83,6 +83,7 @@ impl GitRepo {
             &args,
             limit + 1,
             RecordOptions {
+                environment: self.environment,
                 ok_codes: &[0, 1],
                 timeout: GREP_TIMEOUT,
                 accept: accept.as_ref().map(|f| f as &(dyn Fn(&str) -> bool + Sync)),

@@ -26,7 +26,7 @@ pub fn start(
     // Progress repeats the full status; each changed warning or error is printed once.
     let reported: Mutex<HashMap<String, String>> = Mutex::default();
     let broadcast = hub.clone();
-    let pool = LspPool::new(PoolOptions {
+    let opts = PoolOptions {
         root: session.repo.root.clone(),
         read: Arc::new(move |path| {
             let session = reader.clone();
@@ -71,14 +71,9 @@ pub fn start(
         preload,
         lookup: default_lookup(),
         max_open: None,
-    });
-    let tracking = Arc::downgrade(&pool);
-    session.on_snapshot(move |snap: &Arc<Snapshot>| {
-        let (pool, snap) = (tracking.upgrade(), snap.clone());
-        if let Some(pool) = pool {
-            tokio::spawn(async move { pool.track(&snap).await });
-        }
-    });
+    };
+    let pool = if session.repo.is_isolated() { LspPool::deferred(opts) } else { LspPool::new(opts) };
+    pool.attach(session);
     pool
 }
 

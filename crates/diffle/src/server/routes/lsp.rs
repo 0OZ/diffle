@@ -79,12 +79,14 @@ fn position(raw: &[u8]) -> ApiResult<LspPosition> {
 
 async fn definition(State(d): State<Arc<ApiDeps>>, raw: Bytes) -> ApiResult {
     let pos = position(&raw)?;
+    let _guard = d.session.workspace_read().await?;
     let pool = pool_for(&d, Some(&pos.path), Some(LspFeature::Definition)).await?;
     Ok(Json(pool.definition(&pos).await?).into_response())
 }
 
 async fn type_definition(State(d): State<Arc<ApiDeps>>, raw: Bytes) -> ApiResult {
     let pos = position(&raw)?;
+    let _guard = d.session.workspace_read().await?;
     let pool = pool_for(&d, Some(&pos.path), Some(LspFeature::TypeDefinition)).await?;
     Ok(Json(pool.type_definition(&pos).await?).into_response())
 }
@@ -92,18 +94,21 @@ async fn type_definition(State(d): State<Arc<ApiDeps>>, raw: Bytes) -> ApiResult
 async fn hover(State(d): State<Arc<ApiDeps>>, raw: Bytes) -> ApiResult {
     let pos = position(&raw)?;
     let req: LspHoverRequest = body(&raw)?;
+    let _guard = d.session.workspace_read().await?;
     let pool = pool_for(&d, Some(&pos.path), Some(LspFeature::Hover)).await?;
     Ok(Json(pool.hover(&pos, req.owner_only.unwrap_or(false)).await?).into_response())
 }
 
 async fn references(State(d): State<Arc<ApiDeps>>, raw: Bytes) -> ApiResult {
     let pos = position(&raw)?;
+    let _guard = d.session.workspace_read().await?;
     let pool = pool_for(&d, Some(&pos.path), Some(LspFeature::References)).await?;
     Ok(Json(pool.references(&pos).await?).into_response())
 }
 
 async fn occurrences(State(d): State<Arc<ApiDeps>>, raw: Bytes) -> ApiResult {
     let pos = position(&raw)?;
+    let _guard = d.session.workspace_read().await?;
     let pool = pool_for(&d, Some(&pos.path), None).await?;
     Ok(Json(pool.occurrences(&pos).await?).into_response())
 }
@@ -115,6 +120,7 @@ async fn symbols(State(d): State<Arc<ApiDeps>>, RawQuery(raw): RawQuery) -> ApiR
     }
     let path = q.path.as_ref().map(|p| p.to_string());
     let feature = if path.is_some() { LspFeature::DocumentSymbol } else { LspFeature::WorkspaceSymbol };
+    let _guard = d.session.workspace_read().await?;
     let pool = pool_for(&d, path.as_deref(), Some(feature)).await?;
     let answer = match &path {
         Some(path) => pool.document_symbols(path).await?,
@@ -126,6 +132,7 @@ async fn symbols(State(d): State<Arc<ApiDeps>>, RawQuery(raw): RawQuery) -> ApiR
 async fn graph(State(d): State<Arc<ApiDeps>>, RawQuery(raw): RawQuery) -> ApiResult {
     let q: GraphQuery = query(raw.as_deref())?;
     let cap = q.all.is_none().then_some(crate::graph::MAX_NODES);
+    let _guard = d.session.workspace_read().await?;
     let pool = pool_for(&d, None, Some(LspFeature::References)).await?;
     let snapshotter = d.session.snapshotter()?;
     let snap = snapshotter.current().await?;

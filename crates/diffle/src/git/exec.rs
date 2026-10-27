@@ -27,6 +27,46 @@ pub const CONFIG_ARGS: [&str; 12] = [
     "core.quotePath=false",
 ];
 
+/// Ordinary reviews inherit Git's repository context; owned clones must never inherit it.
+#[derive(Clone, Copy, Default)]
+pub enum GitEnvironment {
+    #[default]
+    Inherited,
+    Isolated,
+}
+
+impl GitEnvironment {
+    fn apply(self, cmd: &mut Command) {
+        if let Self::Isolated = self {
+            // Git's local repository variables, plus discovery, namespace and quarantine routing.
+            for key in [
+                "GIT_DIR",
+                "GIT_WORK_TREE",
+                "GIT_IMPLICIT_WORK_TREE",
+                "GIT_COMMON_DIR",
+                "GIT_INDEX_FILE",
+                "GIT_OBJECT_DIRECTORY",
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                "GIT_QUARANTINE_PATH",
+                "GIT_NAMESPACE",
+                "GIT_PREFIX",
+                "GIT_INTERNAL_SUPER_PREFIX",
+                "GIT_SHALLOW_FILE",
+                "GIT_GRAFT_FILE",
+                "GIT_REPLACE_REF_BASE",
+                "GIT_NO_REPLACE_OBJECTS",
+                "GIT_CONFIG",
+                "GIT_CONFIG_PARAMETERS",
+                "GIT_CONFIG_COUNT",
+                "GIT_CEILING_DIRECTORIES",
+                "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+            ] {
+                cmd.env_remove(key);
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct ExecOptions<'a> {
     /// Exit codes that are not errors (e.g. 1 for `diff --no-index`).
@@ -34,9 +74,10 @@ pub struct ExecOptions<'a> {
     pub input: Option<&'a [u8]>,
     /// Merged over the inherited environment.
     pub env: &'a [(&'a str, &'a str)],
+    pub environment: GitEnvironment,
 }
 
-pub fn command(cwd: &Path, args: &[&str]) -> Command {
+fn command(cwd: &Path, args: &[&str]) -> Command {
     let mut cmd = Command::new("git");
     cmd.args(CONFIG_ARGS).args(args).current_dir(cwd).env("GIT_OPTIONAL_LOCKS", "0").kill_on_drop(true);
     cmd
@@ -58,6 +99,7 @@ pub async fn exec_git(cwd: &Path, args: &[&str], opts: ExecOptions<'_>) -> Resul
         .stdin(if opts.input.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    opts.environment.apply(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| spawn_error(args, &e))?;
     // Feed stdin while the output drains, so neither pipe fills and blocks the other.
     let feed = {
@@ -87,7 +129,17 @@ pub async fn exec_git(cwd: &Path, args: &[&str], opts: ExecOptions<'_>) -> Resul
     })
 }
 
+/// Starts the shared batch reader with the same repository environment policy as one-shot calls.
+pub(super) fn spawn_batch(cwd: &Path, environment: GitEnvironment) -> Result<tokio::process::Child, GitError> {
+    let args = &["cat-file", "--batch"];
+    let mut cmd = command(cwd, args);
+    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+    environment.apply(&mut cmd);
+    cmd.spawn().map_err(|e| spawn_error(args, &e))
+}
+
 pub struct RecordOptions<'a> {
+    pub environment: GitEnvironment,
     pub ok_codes: &'a [i32],
     /// Kill the child and fail after this long.
     pub timeout: Duration,
@@ -103,12 +155,10 @@ pub async fn exec_records(
     max: usize,
     opts: RecordOptions<'_>,
 ) -> Result<Vec<String>, GitError> {
-    let mut child = command(cwd, args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| spawn_error(args, &e))?;
+    let mut cmd = command(cwd, args);
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    opts.environment.apply(&mut cmd);
+    let mut child = cmd.spawn().map_err(|e| spawn_error(args, &e))?;
     let mut stdout = child.stdout.take().expect("piped stdout");
     let mut stderr = child.stderr.take().expect("piped stderr");
     let collect = async {

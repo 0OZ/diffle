@@ -9,7 +9,7 @@ use super::args::GlobalOpts;
 use super::lifetime::{GRACE, last_tab_closed};
 use super::open::open_browser;
 use super::paint::{bold, cyan, dim, green, red, yellow};
-use super::repository::open_review_repository;
+use super::repository::{Opened, open_review_repository};
 use super::timing::Timing;
 use crate::comments::format::format_prompt;
 use crate::git::GitRepo;
@@ -35,10 +35,33 @@ pub async fn run(req: EnterRequest, opts: GlobalOpts) -> anyhow::Result<()> {
         None => std::env::current_dir()?,
     };
     let mut req = req;
-    let opened = open_review_repository(&mut req, &dir, &config.get().github_hosts).await?;
-    let (repo, github, token_source) = (opened.repo.clone(), opened.github.clone(), opened.token_source.clone());
-    // Dropped last: a foreign pull request's clone goes once git is done with it.
-    let _clone = opened.clone;
+    let stop = Arc::new(Notify::new());
+    let trigger = stop.clone();
+    tokio::spawn(async move {
+        signal().await;
+        trigger.notify_one();
+    });
+    let hosts = config.get().github_hosts.clone();
+    // The open future borrows `req` until it is dropped, so it ends before `req` is moved on.
+    let Opened { repo, github, token_source, clone } = {
+        // Biased toward open, so a signal in the same poll as a finished open still closes that repo.
+        let opening = open_review_repository(&mut req, &dir, &hosts);
+        tokio::pin!(opening);
+        let opened = tokio::select! {
+            biased;
+            opened = opening.as_mut() => Some(opened),
+            () = stop.notified() => None,
+        };
+        match opened {
+            Some(opened) => opened?,
+            None => {
+                if let Ok(opened) = opening.await {
+                    release_checkout(&opened.repo, opened.clone).await;
+                }
+                return Ok(());
+            }
+        }
+    };
     timing.mark("open repository");
 
     let hub = Hub::new();
@@ -58,12 +81,6 @@ pub async fn run(req: EnterRequest, opts: GlobalOpts) -> anyhow::Result<()> {
     });
     let server: Arc<Mutex<Option<Server>>> = Arc::default();
 
-    let stop = Arc::new(Notify::new());
-    let trigger = stop.clone();
-    tokio::spawn(async move {
-        signal().await;
-        trigger.notify_one();
-    });
     if !opts.no_open && !opts.keep_alive {
         let (clients, trigger) = (hub.clients(), stop.clone());
         tokio::spawn(async move {
@@ -91,15 +108,16 @@ pub async fn run(req: EnterRequest, opts: GlobalOpts) -> anyhow::Result<()> {
     match started {
         Some(Err(e)) => {
             dispose(&session, &server, &repo, lsp.as_deref()).await;
+            release_checkout(&repo, clone).await;
             Err(e)
         }
         Some(Ok(())) => {
             stop.notified().await;
-            shutdown(&session, &server, &repo, lsp.as_deref()).await;
+            shutdown(&session, &server, &repo, lsp.as_deref(), clone).await;
             Ok(())
         }
         None => {
-            shutdown(&session, &server, &repo, lsp.as_deref()).await;
+            shutdown(&session, &server, &repo, lsp.as_deref(), clone).await;
             Ok(())
         }
     }
@@ -200,7 +218,13 @@ fn localhost(url: &str) -> String {
 }
 
 /// The handoff: the open threads, as a prompt, on stdout. Nothing else in the run writes there.
-async fn shutdown(session: &Arc<Session>, server: &Mutex<Option<Server>>, repo: &GitRepo, lsp: Option<&LspPool>) {
+async fn shutdown(
+    session: &Arc<Session>,
+    server: &Mutex<Option<Server>>,
+    repo: &GitRepo,
+    lsp: Option<&LspPool>,
+    clone: Option<tempfile::TempDir>,
+) {
     crate::status!("\n👋 {}", dim("shutting down"));
     if let Ok(comments) = session.comments() {
         let open = ThreadQuery { path: None, state: Some(ThreadState::Open) };
@@ -212,26 +236,34 @@ async fn shutdown(session: &Arc<Session>, server: &Mutex<Option<Server>>, repo: 
         }
     }
     dispose(session, server, repo, lsp).await;
+    release_checkout(repo, clone).await;
 }
 
-/// Releases everything the run holds, whatever ended it: git settles before its refs go, the
-/// sockets close within a bound.
+/// Reaps `cat-file`, then deletes an owned clone. Nothing may use the repository after this.
+async fn release_checkout(repo: &GitRepo, clone: Option<tempfile::TempDir>) {
+    repo.close().await;
+    if let Some(dir) = clone
+        && let Err(e) = dir.close()
+    {
+        crate::status!("{} removing the pull request checkout: {e}", red("✖"));
+    }
+}
+
+/// Releases everything the run holds, whatever ended it. Sockets close within a bound. Language
+/// servers are reaped with no bound, before the checkout is deleted.
 async fn dispose(session: &Arc<Session>, server: &Mutex<Option<Server>>, repo: &GitRepo, lsp: Option<&LspPool>) {
     let server = server.lock().unwrap().take();
-    let close_server = async {
-        let sockets = async {
-            if let Some(server) = server {
-                server.close().await;
-            }
-        };
-        let servers = async {
-            if let Some(lsp) = lsp {
-                lsp.close().await;
-            }
-        };
-        let _ = tokio::time::timeout(CLOSE_BOUND, async { tokio::join!(sockets, servers) }).await;
+    let sockets = async {
+        if let Some(server) = server {
+            let _ = tokio::time::timeout(CLOSE_BOUND, server.close()).await;
+        }
     };
-    tokio::join!(session.close(), close_server);
+    let language_servers = async {
+        if let Some(lsp) = lsp {
+            lsp.close().await;
+        }
+    };
+    tokio::join!(session.close(), sockets, language_servers);
     if let Err(e) = repo.clean_review_refs().await {
         crate::status!("{} {e}", red("✖"));
     }

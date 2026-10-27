@@ -1,21 +1,24 @@
-//! The repository a run reviews, and the GitHub it talks to: local, or a clone for a foreign pull request.
+//! The repository a run reviews, and the GitHub it talks to: local, or an isolated pull-request clone.
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::error::{Error, GithubError, Result};
+use crate::error::{Error, GitError, GithubError, Result};
 use crate::git::GitRepo;
 use crate::github::client::{HttpClient, no_token, resolve_token};
-use crate::github::hosts::{Github, choose_instance};
+use crate::github::hosts::{Github, choose_instance, github_repository};
 use crate::github::pulls::view_pr;
-use crate::mode::resolve::remote_slug;
+use crate::persist::user_config_dir;
 use crate::protocol::EnterRequest;
+
+/// Child of the user config directory that holds pull-request review state, outside any clone.
+const PR_REVIEW_STATE: &str = "reviews";
 
 pub struct Opened {
     pub repo: Arc<GitRepo>,
     pub github: Github,
     /// Where the token came from, for the startup line.
     pub token_source: Option<String>,
-    /// A foreign pull request's disposable clone, removed when the run drops it.
+    /// The pull request's disposable clone. The run closes it after git has stopped.
     pub clone: Option<tempfile::TempDir>,
 }
 
@@ -24,9 +27,8 @@ fn is_url(selector: &str) -> bool {
     lower.starts_with("http://") || lower.starts_with("https://")
 }
 
-/// Opens what `req` reviews from `cwd`. Foreign pull requests live in a disposable clone, never in
-/// the caller's object database; `req` then names the pull request by url, so a numberless or
-/// branch selector stays tied to it.
+/// Opens what `req` reviews from `cwd`. Every pull request is cloned into a disposable directory and
+/// never fetched into the caller's repository; `req` then names the pull request by its url.
 pub async fn open_review_repository(
     req: &mut EnterRequest,
     cwd: &Path,
@@ -65,23 +67,68 @@ pub async fn open_review_repository_with(
         clone,
     };
     let EnterRequest::Pr { pr } = req else {
-        return Ok(opened(local.expect("a repository outside pr mode"), github, None));
+        let local = local
+            .ok_or_else(|| GitError::refused(format!("not a git repository: {}", cwd.display()), &["rev-parse"]))?;
+        return Ok(opened(local, github, None));
     };
     let Some(client) = github.client.clone() else {
         return Err(GithubError::conflict(no_token(&github.instance.host)).into());
     };
     let found = view_pr(pr.as_deref(), local.as_ref(), client.as_ref(), &github.instance, None).await?;
-    if let Some(local) = local {
+    let mut source = clone_url(&found.url)?;
+    if let Some(local) = &local {
         let remotes = local.remotes().await?;
-        if remotes.iter().any(|r| remote_slug(&r.url) == found.repository.to_lowercase()) {
-            return Ok(opened(local, github, None));
+        if let Some(remote) = remotes.into_iter().find(|remote| {
+            github_repository(&remote.url, &github.instance)
+                .is_some_and(|name| name.eq_ignore_ascii_case(&found.repository))
+        }) {
+            source = remote.url;
         }
     }
     let dir = tempfile::Builder::new().prefix("diffle-pr-").tempdir()?;
-    let url = &found.url[..found.url.find("/pull/").unwrap_or(found.url.len())];
-    let repo = GitRepo::clone_into(url, dir.path()).await?;
-    *pr = Some(found.url.clone());
+    let mut repo = GitRepo::clone_into(&source, dir.path()).await?;
+    // Before the repository is shared: comments for this host and repository outlive the clone.
+    repo.set_review_state_dir(durable_review_dir(&github.instance.host, &found.repository)?);
+    *pr = Some(found.url);
     Ok(opened(repo, github, Some(dir)))
+}
+
+/// The base repository URL of a pull request, without its `/pull/<n>` suffix.
+fn clone_url(pr_url: &str) -> Result<String> {
+    let at = pr_url
+        .to_ascii_lowercase()
+        .rfind("/pull/")
+        .filter(|at| *at > 0)
+        .ok_or_else(|| GithubError::new(format!("not a pull request url: {pr_url}"), 400))?;
+    Ok(pr_url[..at].to_owned())
+}
+
+/// `<config>/reviews/<host>/<owner>/<name>`. Each segment is encoded so it cannot be `.`, `..`, or
+/// a path separator.
+fn durable_review_dir(host: &str, repository: &str) -> Result<std::path::PathBuf> {
+    let (owner, name) = repository
+        .split_once('/')
+        .filter(|(owner, name)| !owner.is_empty() && !name.is_empty() && !name.contains('/'))
+        .ok_or_else(|| GithubError::new(format!("cannot store review state for {repository}"), 502))?;
+    Ok(user_config_dir()
+        .join(PR_REVIEW_STATE)
+        .join(path_segment(host))
+        .join(path_segment(owner))
+        .join(path_segment(name)))
+}
+
+fn path_segment(raw: &str) -> String {
+    let mut out = String::new();
+    for byte in raw.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => out.push(byte as char),
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    if matches!(out.as_str(), "" | "." | "..") {
+        out.insert(0, '_');
+    }
+    out
 }
 
 /// One GitHub and one token lookup per run; without a token, GitHub features are off rather than

@@ -1,19 +1,21 @@
 //! Pull requests: naming them, fetching them into this run's refs, and reviewing them in place.
 mod common;
 
+use std::future::Future;
 use std::sync::Arc;
 
 use common::git_in;
 use common::github::{FakeGithub, knows};
 use common::pr::{Fixture, as_git_url};
 use diffle::cli::repository::open_review_repository_with;
+use diffle::comments::CommentStore;
 use diffle::error::{Error, Result};
 use diffle::git::GitRepo;
 use diffle::github::client::GithubClient;
 use diffle::github::hosts::{Github, GithubInstance};
 use diffle::github::pulls::view_pr;
 use diffle::mode::resolve::resolve_review;
-use diffle::protocol::{ComparisonBase, EnterRequest, Live, RangeView, Review};
+use diffle::protocol::{CommentAnchor, ComparisonBase, EnterRequest, Live, RangeView, Review, ThreadQuery};
 use diffle::snapshotter::Snapshotter;
 use serde_json::json;
 
@@ -261,16 +263,124 @@ async fn is_off_without_a_token() {
     assert!(opened.err().unwrap().to_string().contains("No GitHub token"));
 }
 
-#[tokio::test]
-async fn keeps_matching_prs_in_the_local_repository() {
+fn git_env() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poison| poison.into_inner())
+}
+
+fn block_on<F: Future>(future: F) -> F::Output {
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    runtime.block_on(future)
+}
+
+/// Sets a process variable and puts the previous value back, including when it was unset.
+struct EnvVar {
+    name: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl EnvVar {
+    fn set(name: &'static str, value: &std::path::Path) -> Self {
+        let previous = std::env::var_os(name);
+        // SAFETY: the matching tests hold `git_env` for this whole body, and `git_in` overrides it in children.
+        unsafe { std::env::set_var(name, value) }
+        Self { name, previous }
+    }
+}
+
+impl Drop for EnvVar {
+    fn drop(&mut self) {
+        // SAFETY: as in `set`.
+        unsafe {
+            match self.previous.take() {
+                Some(value) => std::env::set_var(self.name, value),
+                None => std::env::remove_var(self.name),
+            }
+        }
+    }
+}
+
+#[test]
+fn isolates_a_matching_pull_request_from_the_callers_checkout() {
     let f = Fixture::new();
-    let github = with(&f.github());
-    let mut req = pr("7");
-    let opened = open_review_repository_with(&mut req, &f.local, async |_| Ok((github, None))).await.unwrap();
-    assert_eq!(opened.repo.root, f.local);
-    assert!(opened.clone.is_none());
-    drop(opened);
-    assert!(f.local.exists());
+    std::fs::write(f.local.join("a.txt"), "one\nlocal\n").unwrap();
+    std::fs::write(f.local.join("staged.txt"), "staged\n").unwrap();
+    git_in(&f.local, &["add", "staged.txt"]);
+    std::fs::write(f.local.join("extra.txt"), "untracked\n").unwrap();
+    let head = git_in(&f.local, &["rev-parse", "HEAD"]);
+    let index = git_in(&f.local, &["diff", "--cached"]);
+    let worktree = git_in(&f.local, &["diff"]);
+    let refs = git_in(&f.local, &["show-ref"]);
+    let extra = std::fs::read(f.local.join("extra.txt")).unwrap();
+    let config = f.root().join("isolate-gitconfig");
+    let rewrite = format!("[url \"{}\"]\n\tinsteadOf = https://github.com/o/r\n", as_git_url(&f.origin));
+    std::fs::write(&config, &rewrite).unwrap();
+    // The guard stays in this synchronous test. The awaits run in `block_on`, so it is not held inside the future.
+    let _lock = git_env();
+    let _env = EnvVar::set("GIT_CONFIG_GLOBAL", &config);
+
+    let (req, clone_root, local_exists) = block_on(async {
+        let github = with(&f.github());
+        let mut req = pr("7");
+        let opened = open_review_repository_with(&mut req, &f.local, async |_| Ok((github, None))).await.unwrap();
+        assert_ne!(opened.repo.root, f.local, "a matching remote is still cloned");
+        assert!(opened.clone.is_some());
+        let clone_root = opened.repo.root.clone();
+        drop(opened);
+        (req, clone_root, f.local.exists())
+    });
+    let EnterRequest::Pr { pr: Some(url) } = &req else { panic!("a pull request") };
+    assert_eq!(url, "https://github.com/o/r/pull/7");
+    assert_eq!(git_in(&f.local, &["rev-parse", "HEAD"]), head);
+    assert_eq!(git_in(&f.local, &["diff", "--cached"]), index);
+    assert_eq!(git_in(&f.local, &["diff"]), worktree);
+    assert_eq!(git_in(&f.local, &["show-ref"]), refs);
+    assert_eq!(std::fs::read(f.local.join("extra.txt")).unwrap(), extra);
+    assert!(!clone_root.exists(), "{}", clone_root.display());
+    assert!(local_exists);
+}
+
+#[test]
+fn reopens_pull_request_comments_outside_the_clone() {
+    let f = Fixture::new();
+    let config = f.root().join("durable-gitconfig");
+    let rewrite = format!("[url \"{}\"]\n\tinsteadOf = https://github.com/o/r\n", as_git_url(&f.origin));
+    std::fs::write(&config, rewrite).unwrap();
+    let xdg = f.root().join("xdg");
+    std::fs::create_dir(&xdg).unwrap();
+    // The guard stays in this synchronous test. The awaits run in `block_on`, so it is not held inside the future.
+    let _lock = git_env();
+    let _git = EnvVar::set("GIT_CONFIG_GLOBAL", &config);
+    let _xdg = EnvVar::set("XDG_CONFIG_HOME", &xdg);
+    block_on(async {
+        // A host of `..` must stay inside the reviews directory.
+        let github = || Github {
+            instance: GithubInstance { host: "..".into(), git_hosts: vec!["..".into(), "github.com".into()] },
+            client: Some(Arc::new(f.github()) as Arc<dyn GithubClient>),
+        };
+        let mut req = pr("https://github.com/o/r/pull/7");
+        let opened = open_review_repository_with(&mut req, &f.local, async |_| Ok((github(), None))).await.unwrap();
+        let state = opened.repo.review_state_dir().to_path_buf();
+        let reviews = xdg.join("diffle").join("reviews");
+        std::fs::create_dir_all(&reviews).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        let canon = dunce::canonicalize(&state).unwrap();
+        let reviews = dunce::canonicalize(&reviews).unwrap();
+        assert!(canon.starts_with(&reviews), "{}", canon.display());
+        assert!(!canon.starts_with(dunce::canonicalize(&opened.repo.root).unwrap()));
+        let store = CommentStore::open(&state, "pull").await.unwrap();
+        store.add_thread(CommentAnchor::File { path: "a.txt".into() }, "kept".into()).await.unwrap();
+        store.set_viewed("a.txt", "abc", true).await.unwrap();
+        drop(store);
+        drop(opened);
+        let mut req = pr("7");
+        let opened = open_review_repository_with(&mut req, &f.local, async |_| Ok((github(), None))).await.unwrap();
+        assert_eq!(opened.repo.review_state_dir(), state.as_path());
+        let store = CommentStore::open(opened.repo.review_state_dir(), "pull").await.unwrap();
+        let threads = store.threads(&ThreadQuery { path: None, state: None }).await.unwrap();
+        assert_eq!(threads[0].messages[0].body, "kept");
+        assert!(store.viewed().await.unwrap().iter().any(|mark| mark.path == "a.txt" && mark.viewed));
+    });
 }
 
 #[tokio::test]

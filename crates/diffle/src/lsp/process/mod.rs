@@ -1,14 +1,10 @@
 //! One language server process: the only place that starts one.
 mod capabilities;
 mod child;
+mod lifecycle;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::Stdio;
-
-use capabilities::truthy;
-use child::{command, signal, spawn_settled};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
 
 use futures::future::{BoxFuture, Shared};
 use serde_json::{Value, json};
@@ -16,19 +12,13 @@ use tokio::sync::watch;
 
 use crate::error::{Error, Result};
 use crate::lsp::output::{OutputChange, ServerOutput};
-use crate::lsp::rpc::{Connection, RequestError};
-use crate::lsp::shapes::{all_features, client_capabilities, provider_of};
+use crate::lsp::rpc::Connection;
 use crate::lsp::which::program_of;
 use crate::protocol::{LspFeature, LspLogEntry, LspProcessStatus, LspState};
 
 /// A server's settings tree, as `workspace/didChangeConfiguration` carries it.
 pub type Settings = Value;
 pub type SettingsFuture = Shared<BoxFuture<'static, Settings>>;
-
-const INIT_TIMEOUT: Duration = Duration::from_secs(60);
-/// Graceful shutdown budget; both together stay under the CLI's bound on closing.
-const SHUTDOWN_RPC: Duration = Duration::from_millis(500);
-const KILL_AFTER: Duration = Duration::from_millis(500);
 
 pub struct ProcessOptions {
     /// Shell command line that starts a stdio language server, e.g. `pyrefly lsp`.
@@ -65,7 +55,9 @@ pub struct LspProcess {
     output: Mutex<ServerOutput>,
     /// Set once the handshake settles: true when the server is ready.
     ready: watch::Sender<Option<bool>>,
+    started: watch::Sender<bool>,
     exited: watch::Sender<bool>,
+    shutdown: tokio::sync::Mutex<()>,
 }
 
 impl LspProcess {
@@ -99,7 +91,9 @@ impl LspProcess {
                     }
                 })),
                 ready: watch::channel(None).0,
+                started: watch::channel(false).0,
                 exited: watch::channel(false).0,
+                shutdown: tokio::sync::Mutex::new(()),
             }
         });
         let launching = process.clone();
@@ -178,104 +172,10 @@ impl LspProcess {
         let unavailable = || {
             Error::LspUnavailable(state.current.message.clone().unwrap_or_else(|| "language server unavailable".into()))
         };
-        match (&state.rpc, ready && state.current.state == LspState::Ready) {
+        match (&state.rpc, ready && !state.closing && state.current.state == LspState::Ready) {
             (Some(rpc), true) => Ok(rpc.clone()),
             _ => Err(unavailable()),
         }
-    }
-
-    pub async fn close(&self) {
-        let (rpc, pid) = {
-            let mut state = self.state.lock().unwrap();
-            state.closing = true;
-            (state.rpc.clone(), state.pid)
-        };
-        let mut exited = self.exited.subscribe();
-        if let Some(rpc) = rpc.filter(|_| !*exited.borrow())
-            && rpc.request("shutdown", Value::Null, Some(SHUTDOWN_RPC)).await.is_ok()
-        {
-            rpc.notify("exit", Value::Null);
-        }
-        let Some(pid) = pid.filter(|_| !*exited.borrow()) else { return };
-        signal(pid, false);
-        if tokio::time::timeout(KILL_AFTER, exited.wait_for(|e| *e)).await.is_err() {
-            signal(pid, true);
-            let _ = exited.wait_for(|e| *e).await;
-        }
-    }
-
-    async fn launch(self: &Arc<Self>, opts: ProcessOptions) -> std::result::Result<(), ()> {
-        let spawned = match command(&opts.command) {
-            Ok(mut cmd) => {
-                cmd.current_dir(&opts.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-                spawn_settled(&mut cmd).await.map_err(|e| e.to_string())
-            }
-            Err(e) => Err(e),
-        };
-        let mut child = match spawned {
-            Ok(child) => child,
-            Err(e) => {
-                self.exited.send_replace(true);
-                return self.fail(format!("cannot start \"{}\": {e}", self.command));
-            }
-        };
-        let (stdin, stdout, stderr) = (child.stdin.take(), child.stdout.take(), child.stderr.take());
-        let (Some(stdin), Some(stdout), Some(stderr)) = (stdin, stdout, stderr) else {
-            return self.fail(format!("cannot start \"{}\": no stdio", self.command));
-        };
-        let rpc = Connection::new(stdout, stdin);
-        {
-            let mut state = self.state.lock().unwrap();
-            state.rpc = Some(rpc.clone());
-            state.pid = child.id();
-        }
-        tokio::spawn(child::watch(Arc::downgrade(self), stderr, child));
-        self.listen(&rpc);
-        let root_uri = url::Url::from_file_path(&opts.root).map(String::from).unwrap_or_default();
-        let mut params = json!({
-            "processId": std::process::id(),
-            "clientInfo": { "name": "diffle" },
-            "rootUri": root_uri,
-            "rootPath": opts.root.to_string_lossy(),
-            "workspaceFolders": [{ "uri": root_uri, "name": "workspace" }],
-            "capabilities": client_capabilities(),
-        });
-        if let Some(options) = opts.initialization_options {
-            params["initializationOptions"] = options;
-        }
-        let init = match rpc.request("initialize", params, Some(INIT_TIMEOUT)).await {
-            Ok(init) => init,
-            Err(e) => {
-                // A server that died says why through its exit, which lands a moment after its output closes.
-                if matches!(e, RequestError::Closed(_)) {
-                    let mut exited = self.exited.subscribe();
-                    let _ = tokio::time::timeout(Duration::from_millis(500), exited.wait_for(|e| *e)).await;
-                }
-                return self.fail(format!("initialize failed: {e}"));
-            }
-        };
-        let capabilities = init.get("capabilities").cloned().unwrap_or_default();
-        let advertised: Vec<LspFeature> =
-            all_features().into_iter().filter(|f| capabilities.get(provider_of(*f)).is_some_and(truthy)).collect();
-        self.state.lock().unwrap().advertised.extend(advertised);
-        rpc.notify("initialized", json!({}));
-        let settings = self.state.lock().unwrap().settings.clone();
-        if let Some(settings) = settings {
-            let settings = settings.await;
-            if !self.state.lock().unwrap().closing {
-                rpc.notify("workspace/didChangeConfiguration", json!({ "settings": settings }));
-            }
-        }
-        let status = {
-            let mut state = self.state.lock().unwrap();
-            if state.current.state != LspState::Starting {
-                return Err(());
-            }
-            state.current.state = LspState::Ready;
-            state.current.clone()
-        };
-        (self.on_status)(&status);
-        Ok(())
     }
 
     /// What the output moved lands on the status, unless the process is done.
